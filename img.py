@@ -1,3 +1,5 @@
+import asyncio
+
 import aiofiles
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -14,7 +16,7 @@ async def generate_profile_stats_for_worker(telegram_id, balance, profit, warnin
     draw = ImageDraw.Draw(image)
 
     # Задаем шрифт (Montserrat)
-    font = ImageFont.truetype('Montserrat-VariableFont_wght.ttf', size=96)
+    font = ImageFont.truetype('Montserrat-Bold.ttf', size=96)
 
     # Задаем координаты и текст, который вы хотите добавить
     text = "0"
@@ -30,8 +32,11 @@ async def generate_profile_stats_for_worker(telegram_id, balance, profit, warnin
     draw.text((x - 12, (y + 275 * 3) + 40), payment_method.split(' ')[1], font=ImageFont.truetype('Montserrat-VariableFont_wght.ttf', size=36), fill=text_color)
 
     # Сохраняем измененное изображение
-    async with aiofiles.open(f'{telegram_id}.png', mode='wb') as output_file:
-        await output_file.write(image.tobytes())
-
+    #async with aiofiles.open(f'{telegram_id}.png', mode='wb') as output_file:
+        #await output_file.write(image.tobytes())
+    image.save(f'{telegram_id}.png')
     # Закрываем изображение
     image.close()
+
+import json
+print(json.dumps({"change":2}))

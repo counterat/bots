@@ -1,4 +1,8 @@
 import requests
+from bs4 import BeautifulSoup
+
+from mamonts import show_all_currencies
+
 token = 'u3dL8d8BJIbUvxNFME1wIOOGdb6BDWUlnX3_Zc9976dc'
 import datetime
 import time
@@ -35,3 +39,34 @@ async def waiting_for_mamont_async(unix_timestamp, min_amount, token):
 
             await asyncio.sleep(interval_seconds)
 
+async def get_crypto_price_async( crypto_symbol):
+    async with aiohttp.ClientSession() as session:
+        url = f'https://api.coinbase.com/v2/prices/{crypto_symbol}-USD/spot'
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data['data']['amount']
+            else:
+                return None
+
+
+async def fetch_usd_to_rub_currency():
+    async with aiohttp.ClientSession() as session:
+        url = 'https://minfin.com.ua/currency/converter/1-usd-to-rub/'
+        async with session.get(url) as response:
+            if response.status == 200:
+                html = await response.text()
+                soup =  BeautifulSoup(html)
+
+                value = soup.select('#root > div > section > div > div > div > section:nth-child(1) > header > div.sc-1xlibvr-0.hSIwaV > div.sc-1xlibvr-2.ePvvEL > div:nth-child(3) > div.zlkj5-0.kIZRLg > label > input')[0]['value']
+                return value
+            else:
+                return None
+
+async def main():
+    ez = await fetch_usd_to_rub_currency()
+    print(type(ez))
+
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
