@@ -38,5 +38,3 @@ async def generate_profile_stats_for_worker(telegram_id, balance, profit, warnin
     # Закрываем изображение
     image.close()
 
-import json
-print(json.dumps({"change":2}))

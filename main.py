@@ -17,7 +17,8 @@ from test import create_mirror
 from aiobotocore.session import get_session
 import requests
 admin_chat_id  = '881704893'
-API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
+#API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
+API_TOKEN = '6566235981:AAEZz5GOtJ0IWq3mr-dC-c_Pn-kYVUc31OA'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
 
@@ -59,9 +60,11 @@ async def handle_distribution(message: types.Message, state: FSMContext):
 async def get_info_about_mammonth(message: types.Message):
     mammonth_service_id = message.text.split('t')[1]
     mammonth = session.query(Mammoth).filter(Mammoth.service_id == mammonth_service_id).first()
-    if mammonth:
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first
+    try:
+        if mammonth.belongs_to_worker in worker.mammonts.split(','):
 
-        template = f'''
+            template = f'''
 💙 Мамонт с ID *{mammonth.service_id}* 
 
 Telegram ID: `{mammonth.telegram_id}`
@@ -72,8 +75,9 @@ ID мамонта: *t{mammonth.service_id}*
 На выводе: {mammonth.on_output} ₽
 Валюта: RUB
     '''
-        await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup=mammont_management_buttons(message.from_user.id))
-
+            await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup=mammont_management_buttons(message.from_user.id))
+    except AttributeError:
+        await message.answer('Мамонт не найден!')
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"show_stats":'))
 async def handle_mammonth_show_stats(query:types.CallbackQuery):
@@ -292,12 +296,12 @@ async def showprofile(message: types.Message):
     caption = f"""
 🗃 Твой профиль [{worker.telegram_id}],  0 уровень!
 
-Код для сервисов: {worker.service_id}!
+Код для сервисов: {worker.service_id}
 
 💸 У тебя {worker.profit_quantity} профитов на сумму {worker.profit} RUB
 Средний профит 0 RUB
 
-Приглашено: {len(worker.mammonts)} воркеров
+Приглашено: {len(session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all())} воркеров
 Баланс: {worker.balance} RUB
 Статус: Воркер
 Предупреждений: [{worker.warnings}/3]

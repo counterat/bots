@@ -92,10 +92,6 @@ def show_{cryptocurrency}_futures():
 @dp.callback_query_handler(lambda callback_query: callback_query.data == f'show_{cryptocurrency}_currency')
 async def handler_show_{cryptocurrency}_currency(query: types.CallbackQuery):
 
-    def show_{cryptocurrency}_futures():
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton('Повышение', callback_data='{cryptocurrency}_price_increase'), InlineKeyboardButton('Понижение', callback_data='{cryptocurrency}_price_decrease'))
-        return keyboard
     
     from monobank import get_crypto_price_async, fetch_usd_to_rub_currency
     crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
@@ -171,7 +167,7 @@ async def handle_state_crypto_futures(message: types.Message, state:FSMContext):
 
         await message.answer('Введите число от 2000 до 250.000!')
 
-        print(ex)
+ 
 
         ''', locals())
 
