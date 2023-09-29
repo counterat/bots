@@ -27,7 +27,7 @@ class Mammoth(Base):
     __tablename__ = 'mammonths'
     first_name = Column(String)
     telegram_id = Column(Integer, primary_key=True)
-    service_id = Column(Integer, default=randint(100000000, 999999999))
+    service_id = Column(Integer)
     balance = Column(Float, default=0.0)
     on_output = Column(Float, default=0.0)
     cryptoportfolio = Column(JSON, default={'btc': 0.0, 'eth': 0.0,'ltc':0.0})
@@ -58,3 +58,7 @@ Base.metadata.create_all(engine)
 # Создаем сессию SQLAlchemy
 Session = sessionmaker(bind=engine)
 session = Session()
+
+mm = session.query(Mammoth).filter(Mammoth.belongs_to_worker == 881704893).all()
+for m in mm:
+    print(m.telegram_id)

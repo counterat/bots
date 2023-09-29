@@ -244,8 +244,9 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
         if not session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
             await message.reply(template, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
-
-            new_mammonth = Mammoth(telegram_id=message.from_user.id, belongs_to_worker=admin_chat_id, first_name=message.from_user.first_name)
+            from random import randrange
+            new_mammonth = Mammoth(telegram_id=message.from_user.id, belongs_to_worker=admin_chat_id, first_name=message.from_user.first_name, service_id = randrange(
+                100000, 999999) )
             worker = session.query(Worker).filter(Worker.telegram_id == admin_chat_id).first()
             worker.mammonts += f'{message.from_user.id},'
             session.add(worker)

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import aiofiles
 from PIL import Image, ImageDraw, ImageFont
@@ -38,3 +39,5 @@ async def generate_profile_stats_for_worker(telegram_id, balance, profit, warnin
     # Закрываем изображение
     image.close()
 
+import random
+print(random.randrange(1,1000))

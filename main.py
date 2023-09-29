@@ -18,7 +18,7 @@ from aiobotocore.session import get_session
 import requests
 admin_chat_id  = '881704893'
 #API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
-API_TOKEN = '6566235981:AAEZz5GOtJ0IWq3mr-dC-c_Pn-kYVUc31OA'
+API_TOKEN = '6566235981:AAGE17K23e9zElLG-NeRBzpNQJoMJfD0Luc'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
 
@@ -52,7 +52,7 @@ async def handle_distribution(message: types.Message, state: FSMContext):
     worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
     for mammonth in workers_mammonts:
         data = {'chat_id':mammonth.telegram_id, 'text':message.text}
-        requests.post(url = f'https://api.telegram.org/bot{worker.token}/sendMessage')
+        requests.post(url = f'https://api.telegram.org/bot{worker.token}/sendMessage', data = data)
     await state.finish()
 
 
@@ -60,9 +60,9 @@ async def handle_distribution(message: types.Message, state: FSMContext):
 async def get_info_about_mammonth(message: types.Message):
     mammonth_service_id = message.text.split('t')[1]
     mammonth = session.query(Mammoth).filter(Mammoth.service_id == mammonth_service_id).first()
-    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
     try:
-        if mammonth.belongs_to_worker in worker.mammonts.split(','):
+        if mammonth.belongs_to_worker == worker.telegram_id:
 
             template = f'''
 💙 Мамонт с ID *{mammonth.service_id}* 
@@ -75,7 +75,7 @@ ID мамонта: *t{mammonth.service_id}*
 На выводе: {mammonth.on_output} ₽
 Валюта: RUB
     '''
-            await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup=mammont_management_buttons(message.from_user.id))
+            await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup=mammont_management_buttons(mammonth.telegram_id))
     except AttributeError:
         await message.answer('Мамонт не найден!')
 
@@ -210,9 +210,11 @@ class create_mirror_bot_states(StatesGroup):
 
 
 
-def admin_approval_button():
-    return InlineKeyboardMarkup().add(InlineKeyboardButton("Разрешить воркеру создать аккаунт", callback_data='approvetocreateaccount'), InlineKeyboardButton(
-        'Запретить', callback_data='disapprovetocreateaccount'))
+def admin_approval_button(telegram_id):
+
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("Разрешить воркеру создать аккаунт", callback_data=json.dumps({"approvetocreateaccount":telegram_id})),
+                                                           InlineKeyboardButton(
+        'Запретить', callback_data=json.dumps({"disapprovetocreateaccount":telegram_id})))
 
 
 def create_button_how_to_input_token():
@@ -434,7 +436,8 @@ async def answer3(message: types.Message, state: FSMContext):
     await bot.send_message(admin_chat_id, f"Ответы пользователя: `{data['id']}` \n"
                                          f"1. Опыт работы в сфере: {data['answer1']}\n"
                                          f"2. Источник информации: {data['answer2']}\n"
-                                         f"3. Опыт работы в сфере: {data['answer3']}", parse_mode=ParseMode.MARKDOWN, reply_markup=admin_approval_button())
+                                         f"3. Опыт работы в сфере: {data['answer3']}", parse_mode=ParseMode.MARKDOWN, reply_markup=admin_approval_button(
+        message.from_user.id))
     # Завершаем состояние
     await state.finish()
 
@@ -449,26 +452,25 @@ async def handle_top_up_mammonths_balance(query: types.CallbackQuery):
     session.commit()
     await query.message.answer('Вы оплатили заявку', parse_mode=ParseMode.MARKDOWN)
 
-@dp.callback_query_handler(lambda callback_query: callback_query.data == 'approvetocreateaccount')
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"approvetocreateaccount": '))
 async def handle_approve_callback(query: types.CallbackQuery):
-    await bot.send_message(query['from']['id'], "Вы верифицированный пользователь. Теперь вы имеете право пользоваться функциями для воркеров")
 
-    chat_id = query.message.chat.id
-    message_id = query.message.message_id
-    new_user = Worker(telegram_id=query['from']['id'], name=query['from']['first_name'])
+    chat_id = json.loads(query.data)['approvetocreateaccount']
+    chat = await  bot.get_chat(chat_id)
+    await bot.send_message(chat_id, "Вы верифицированный пользователь. Теперь вы имеете право пользоваться функциями для воркеров")
+
+
+    new_user = Worker(telegram_id=chat_id, name=chat.username)
     session.add(new_user)
     session.commit()
-    # Удаляем сообщение
-    await bot.delete_message(chat_id, message_id)
 
-@dp.callback_query_handler(lambda callback_query: callback_query.data == 'disapprovetocreateaccount')
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"disapprovetocreateaccount": '))
 async def handle_approve_callback(query: types.CallbackQuery):
-    await bot.send_message(query['from']['id'], "Вам запрещено пользоваться функциями для воркеров")
-    chat_id = query.message.chat.id
-    message_id = query.message.message_id
+    chat_id = json.loads(query.data)['approvetocreateaccount']
+    await bot.send_message(chat_id, "Вам запрещено пользоваться функциями для воркеров")
 
-    # Удаляем сообщение
-    await bot.delete_message(chat_id, message_id)
+
 
 
 
