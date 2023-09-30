@@ -13,7 +13,7 @@ def create_mirror(token, admin_id):
     from aiogram.dispatcher import FSMContext
     from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, InputFile
     from aiogram.dispatcher.filters.state import State, StatesGroup
-    from db import Worker, session, Mammoth, Futures
+    from db import Worker, session, Mammoth, Futures, Withdraws
     from img import generate_profile_stats_for_worker
     from aws import sns, aws_region, aws_access_key_id, aws_secret_access_key
 
@@ -190,7 +190,8 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
 
     def top_up_balance():
-        return InlineKeyboardMarkup().add(InlineKeyboardButton('Пополнить', callback_data='top_up_balance'))
+        return InlineKeyboardMarkup().add(InlineKeyboardButton('Пополнить', callback_data='top_up_balance')).add(InlineKeyboardButton('Вывести',
+                                                                                                                                      callback_data='withdraw'))
 
 
     def top_up_balance_by_card():
@@ -221,7 +222,9 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
     markup.add(open_ecn)
     markup.add(info, support)
 
-
+    class WithdrawStates(StatesGroup):
+        first = State()
+        second = State()
     class PortfolioStates(StatesGroup):
         ShowPortfolio = State()
 
@@ -503,6 +506,64 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
     async def handle_top_up_balance(query: types.CallbackQuery):
         await query.message.answer('Выберите удобный для вас метод пополнения.', reply_markup=top_up_balance_by_card())
         await query.message.delete()
+
+    @dp.message_handler(state=WithdrawStates.first)
+    async def get_card_number(message: types.Message):
+        from monobank import is_valid_credit_card
+        try:
+            if is_valid_credit_card((message.text)):
+                await WithdrawStates.second.set()
+                state = dp.current_state(chat=message.chat.id, user=message.from_user.id)
+                data = dict()
+                data['user_id'] = message.from_user.id
+                data['card_num'] = message.text
+                await state.set_data(data)
+                await message.answer('Введите сумму вывода от 2000 RUB')
+
+        except Exception as ex:
+            print('сто патрона')
+            print(ex)
+            await message.answer('''
+❌ *Некорректный ввод, введите Ваши реквизиты без лишних пробелов и сторонних символов.*
+            
+            ''', parse_mode=ParseMode.MARKDOWN)
+
+    @dp.message_handler(state=WithdrawStates.second)
+    async def create_application_for_withdraw(message: types.Message, state:FSMContext):
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+
+        if float(message.text) <= mammonth.balance:
+            if float(message.text) >= 2000:
+                data = await state.get_data()
+                user_id = data['user_id']
+                card_num = data['card_num']
+                new_application_to_withdraw = Withdraws(user_id = user_id, card = card_num, amount = float(message.text))
+                session.add(new_application_to_withdraw)
+                session.commit()
+                message_attributes = {
+                    'withdraw_id': {
+                        'DataType': 'Number',
+                        'StringValue': f'{new_application_to_withdraw.id}'
+                    }
+                }
+
+                sns.publish(TopicArn='arn:aws:sns:eu-north-1:441199499768:ApplicationsToWithdraw',
+
+                            Message=f'''NewApplicationToWithdraw''', MessageAttributes=message_attributes
+
+                            )
+                await  message.answer('Заявка принята, ожидайте')
+            else:
+                await message.answer('Сумма вывода должна быть от 2000 RUB')
+                await state.finish()
+        else:
+            await message.answer('Сумма вывода больше чем ваш баланс!')
+            await state.finish()
+
+    @dp.callback_query_handler(lambda callback_query: callback_query.data == 'withdraw')
+    async def handle_withdraw(query: types.CallbackQuery):
+        await WithdrawStates.first.set()
+        await query.message.answer("Введите действительный номер банковской карты")
 
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance_by_card')

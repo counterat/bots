@@ -63,9 +63,28 @@ async def fetch_usd_to_rub_currency():
             else:
                 return None
 
-async def main():
-    ez = await fetch_usd_to_rub_currency()
-    print(type(ez))
+def is_valid_credit_card(card_number):
+    # Удаление пробелов и дефисов из номера карты
+    card_number = card_number.replace(" ", "").replace("-", "")
+
+    # Проверка, является ли номер карты числовым
+    if not card_number.isdigit():
+        return False
+
+    # Алгоритм Луна (алгоритм Modulus 10)
+    total = 0
+    reverse_digits = card_number[::-1]
+
+    for i, digit in enumerate(reverse_digits):
+        if i % 2 == 1:
+            double_digit = int(digit) * 2
+            if double_digit > 9:
+                double_digit -= 9
+            total += double_digit
+        else:
+            total += int(digit)
+
+    return total % 10 == 0
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()

@@ -11,14 +11,14 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher import FSMContext
 from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, InputFile
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from db import Worker, session, Mammoth
+from db import Worker, session, Mammoth, Withdraws
 from img import generate_profile_stats_for_worker
 from test import create_mirror
 from aiobotocore.session import get_session
 import requests
 admin_chat_id  = '881704893'
 #API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
-API_TOKEN = '6566235981:AAGE17K23e9zElLG-NeRBzpNQJoMJfD0Luc'
+API_TOKEN = '6686215620:AAGZ4kY1EjNHu4zwP0XQDtiu9GbqYnlL3cE'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
 
@@ -160,10 +160,19 @@ async def process_sqs_messages():
 
 
             )
+            response_for_withdraws = await sqs.receive_message(
+                QueueUrl='https://sqs.eu-north-1.amazonaws.com/441199499768/ApplicationsToWithdraw1',
+                AttributeNames=['All'],
+                MaxNumberOfMessages=1,
+                MessageAttributeNames=['All'],
+                VisibilityTimeout=0,
+                WaitTimeSeconds=0
+
+            )
             try:
                 diction_for_deals = response_for_deals['Messages'][0]['Body']
                 msg_attributes = (json.loads(diction_for_deals).get('MessageAttributes'))
-                MammonthTelegramId = json.loads(diction_for_deals).get('MammonthTelegramId')
+                MammonthTelegramId = json.loads(msg_attributes).get('MammonthTelegramId')
                 Amount = json.loads(diction_for_deals).get('Amount')
                 mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == MammonthTelegramId).first()
                 if Amount < 0:
@@ -195,6 +204,23 @@ async def process_sqs_messages():
             except Exception as ex:
                 print(ex)
                 print('!!!!!!')
+
+
+            try:
+                message = response_for_withdraws['Messages'][0]
+                receipt_handle = message['ReceiptHandle']
+                diction_for_withdraws = response_for_withdraws['Messages'][0]['Body']
+                msg_attributes = (json.loads(diction_for_withdraws).get('MessageAttributes'))
+                print(msg_attributes)
+                withdraw_id = msg_attributes.get('withdraw_id')['Value']
+                print(msg_attributes, withdraw_id)
+                withdraw = session.query(Withdraws).filter(Withdraws.id == int(withdraw_id)).first()
+                mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == withdraw.user_id).first()
+
+                await bot.send_message(withdraw.user_id, f'''Пользователь {mammonth.first_name} (/t{mammonth.service_id}) хочет вывести *{withdraw.amount}* на счет `{withdraw.card}`''', parse_mode=ParseMode.MARKDOWN)
+                await  sqs.delete_message(QueueUrl='https://sqs.eu-north-1.amazonaws.com/441199499768/ApplicationsToWithdraw1', ReceiptHandle=receipt_handle)
+            except Exception as ex:
+                print(ex, "пишка")
             await asyncio.sleep(10)
 
 
@@ -395,7 +421,7 @@ async def create_mirror_states_first_handler(message: types.Message, state: FSMC
     mirror_bot_thread =  threading.Thread(target=create_mirror, args=(message.text, message.from_user.id))
     mirror_bot_thread.start()
 
-    await message.reply("Создание зеркала завершено! Токен зеркального бота: " + '_message.text_')
+    await message.reply(f"""Создание зеркала завершено!""", parse_mode=ParseMode.MARKDOWN)
     worker.token = message.text
     session.commit()
 @dp.callback_query_handler(lambda callback_query:callback_query.data=='mammonths_management')

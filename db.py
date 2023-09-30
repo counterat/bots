@@ -52,6 +52,12 @@ class Futures(Base):
     is_increase = Column(Boolean)
     start_price = Column(Float)
 
+class Withdraws(Base):
+    __tablename__ = 'withdraws'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    card = Column(Integer)
+    amount = Column(Float)
 
 engine = create_engine('sqlite:///mydatabase.db')
 Base.metadata.create_all(engine)
