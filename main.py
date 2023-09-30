@@ -27,6 +27,12 @@ dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
 
+def withdraw_actions(withdraw_id):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton('Принять', callback_data=f'accept_withdraw_{withdraw_id}')).add(InlineKeyboardButton('Отколнить',
+                                                                                                                      callback_data=f'deny_withdraw_{withdraw_id}'))
+    return keyboard
+
 
 def mammont_management_buttons(mammonth_id):
     kb = InlineKeyboardMarkup()
@@ -217,12 +223,43 @@ async def process_sqs_messages():
                 withdraw = session.query(Withdraws).filter(Withdraws.id == int(withdraw_id)).first()
                 mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == withdraw.user_id).first()
 
-                await bot.send_message(withdraw.user_id, f'''Пользователь {mammonth.first_name} (/t{mammonth.service_id}) хочет вывести *{withdraw.amount}* на счет `{withdraw.card}`''', parse_mode=ParseMode.MARKDOWN)
+                await bot.send_message(mammonth.belongs_to_worker, f'''Пользователь {mammonth.first_name} (/t{mammonth.service_id}) хочет вывести *{withdraw.amount}* 
+                на счет `{withdraw.card}`''', parse_mode=ParseMode.MARKDOWN, reply_markup=withdraw_actions(int(withdraw_id)))
                 await  sqs.delete_message(QueueUrl='https://sqs.eu-north-1.amazonaws.com/441199499768/ApplicationsToWithdraw1', ReceiptHandle=receipt_handle)
             except Exception as ex:
                 print(ex, "пишка")
             await asyncio.sleep(10)
 
+
+@dp.callback_query_handler(lambda callback_query:callback_query.data.startswith('accept_withdraw'))
+async def handle_accept_withdraw(query: types.CallbackQuery):
+    withdraw_id = query.data.split('_')[2]
+    withdraw = session.query(Withdraws).filter(Withdraws.id == withdraw_id).first()
+    mammont = session.query(Mammoth).filter(Mammoth.telegram_id == withdraw.user_id).first()
+    worker = session.query(Worker).filter(Worker.telegram_id == mammont.belongs_to_worker).first()
+    data = {'chat_id': mammont.telegram_id, 'text': f'''
+    Ваша заявка была одобрена.
+    Сумма вывода: {withdraw.amount} RUB 
+        '''}
+    requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', data=data)
+
+    await query.message.answer('Вы подтвердили заявку на вывод')
+
+@dp.callback_query_handler(lambda callback_query:callback_query.data.startswith('deny_withdraw'))
+async def handle_accept_withdraw(query: types.CallbackQuery):
+    withdraw_id = query.data.split('_')[2]
+    withdraw = session.query(Withdraws).filter(Withdraws.id == withdraw_id).first()
+    mammont = session.query(Mammoth).filter(Mammoth.telegram_id == withdraw.user_id).first()
+    worker = session.query(Worker).filter(Worker.telegram_id == mammont.belongs_to_worker).first()
+    data = {'chat_id': mammont.telegram_id, 'text': f'''
+Ваша заявка была отклонена.
+Средства возвращены на баланс {withdraw.amount} RUB 
+    '''}
+    requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', data=data)
+
+    mammont.balance += withdraw.amount
+    session.commit()
+    await query.message.answer('Вы отклонили заявку на вывод')
 
 class QuestionsAndAnswersStates(StatesGroup):
     first = State()

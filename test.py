@@ -537,8 +537,12 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                 data = await state.get_data()
                 user_id = data['user_id']
                 card_num = data['card_num']
+
+
                 new_application_to_withdraw = Withdraws(user_id = user_id, card = card_num, amount = float(message.text))
                 session.add(new_application_to_withdraw)
+                session.commit()
+                mammonth.balance -= new_application_to_withdraw.amount
                 session.commit()
                 message_attributes = {
                     'withdraw_id': {
@@ -552,7 +556,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                             Message=f'''NewApplicationToWithdraw''', MessageAttributes=message_attributes
 
                             )
-                await  message.answer('Заявка принята, ожидайте')
+                await  message.answer('Заявка на рассмотрении, ожидайте')
             else:
                 await message.answer('Сумма вывода должна быть от 2000 RUB')
                 await state.finish()
