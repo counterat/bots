@@ -1,5 +1,6 @@
 
 def create_mirror(token, admin_id):
+    from aiogram.types import LabeledPrice
     import asyncio
     import datetime
     import json
@@ -13,9 +14,14 @@ def create_mirror(token, admin_id):
     from aiogram.dispatcher import FSMContext
     from aiogram.types import ParseMode, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, InputFile
     from aiogram.dispatcher.filters.state import State, StatesGroup
-    from db import Worker, session, Mammoth, Futures, Withdraws
+    from db import Worker, session, Mammoth, Futures, Withdraws,  MammonthTopUpWithCrypto
     from img import generate_profile_stats_for_worker
     from aws import sns, aws_region, aws_access_key_id, aws_secret_access_key
+    from main import API_TOKEN, support_team
+    from diction import active_chats
+    from config_for_bots import payout_for_admins_bot_token
+    TOKEN_FOR_MAIN = API_TOKEN
+
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -24,29 +30,97 @@ def create_mirror(token, admin_id):
 
 
 
-    def generate_number_for_futures(start_price, luck):
+
+
+    def generate_number_for_futures(start_price, luck, is_increase):
     # Начальное значение
         start_price = float(start_price)  # Здесь установлено начальное значение 26 000
 
     # Генерируем случайное число от -10 до 10 с шагом 0.1
-        random_change = random.randrange(-100, 101, 1) / 10.0
+        random_change = random.uniform(0, 0.10)
 
     # Проверяем вероятность
         if random.random() * 100 <= luck:
-        # Если выпадает в 70% вероятности, то число будет выше start_price
-            generated_price = start_price + ((start_price * random_change) / 100)
+            if is_increase:
+                generated_price = start_price + ((start_price * random_change))
+            else:
+                generated_price = start_price - ((start_price * random_change))
         else:
-        # В противном случае, число будет ниже start_price
-            generated_price = start_price - ((start_price * random_change) / 100)
-
+            if is_increase:
+                generated_price = start_price - ((start_price * random_change))
+            else:
+                generated_price = start_price + ((start_price * random_change))
         return generated_price
 
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
 
     bot = Bot(token=API_TOKEN)
     dp = Dispatcher(bot)
     dp.middleware.setup(LoggingMiddleware())
+
+    @dp.message_handler(content_types=types.ContentType.SUCCESSFUL_PAYMENT)
+    async def process_successful_payment(message: types.Message):
+        successful_payment = message.successful_payment
+        # Здесь можно обработать информацию о платеже
+        # Например, подтвердить платеж и предоставить услуги или товары
+
+        # Можно получить информацию о товарах из successful_payment в этом месте
+        total_amount = successful_payment.total_amount
+        currency = successful_payment.currency
+        invoice_payload = successful_payment.invoice_payload
+
+        # Выполните здесь необходимые действия в зависимости от вашего бизнес-процесса
+
+        # Пример: отправить сообщение, что оплата успешно проведена
+        await message.answer("Оплата успешно проведена! Спасибо за ваш заказ.")
+
+    @dp.pre_checkout_query_handler(lambda query: True)
+    async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+        print('ХУЙЛООООООООО')
+        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+        await bot.send_message(admin_chat_id, 'sdffdsfdf')
+    class SendMessagesToOperator(StatesGroup):
+        first = State()
+
+    @dp.message_handler(lambda message:message.text == 'Оператор разорвал соединение с вами')
+    async def refuse_connection(message: types.Message, state:FSMContext):
+        await state.finish()
+
+    from aiogram.dispatcher.filters import Command
+    @dp.message_handler(Command("stop_chat"), state=SendMessagesToOperator.first)
+    async def stop_chat(message: types.Message, state:FSMContext):
+        if not message.from_user.id:
+            await message.answer('Авторизуйтесь используя комманду /start')
+            return
+        data = await state.get_data()
+        operator_id = data['operator_id']
+        await state.finish()
+        await message.answer('Вы завершили чат')
+        data = {'chat_id': operator_id, 'text': f'Пользователь с айди {message.from_user.id} разорвал соединение'}
+        import requests
+        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
+        for operator, mammonth in active_chats.items():
+            if active_chats.get(operator) == str(message.from_user.id):
+                del active_chats[operator]
+        await message.answer(f'{active_chats} 9999')
+    @dp.message_handler(state=SendMessagesToOperator.first)
+    async def handle_send_msgs_to_operator_state(message:types.Message, state:FSMContext):
+        data = await state.get_data()
+        operator_id = data['operator_id']
+        import requests
+        data = {'chat_id': operator_id, 'text': message.text}
+        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
+        await message.answer(active_chats)
+
+    @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('start_chat_with_operator'))
+    async def handle_chat_with_operator(query: types.CallbackQuery):
+        operator_id = query.data.split('_')[-1]
+        state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
+        data = dict()
+        data['operator_id'] = operator_id
+        await state.set_data(data)
+        await SendMessagesToOperator.first.set()
 
 
     def choose_duration_futures(id_field):
@@ -57,6 +131,7 @@ def create_mirror(token, admin_id):
             callback_data = json.dumps({
                 'id_field': id_field,
                 'duration': duration
+
             })
             print(callback_data)
             button_text = f"{duration} секунд" if duration < 60 else f"{duration // 60} минут"
@@ -74,7 +149,7 @@ def create_mirror(token, admin_id):
 
     crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
     cryptocurrencies = ['bitcoin', 'bitcoin_cash', 'ripple', 'doge', 'ethereum', 'binance_coin', 'litecoin', 'terra', 'solana', 'tron', 'cardano', 'polkadot', 'polygon',
-                        'polygon', 'monero', 'euro']
+                         'monero', 'euro']
     for cryptocurrency in cryptocurrencies:
 
         print(locals())
@@ -96,7 +171,7 @@ async def handler_show_{cryptocurrency}_currency(query: types.CallbackQuery):
     from monobank import get_crypto_price_async, fetch_usd_to_rub_currency
     crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
     cryptocurrencies = ['bitcoin', 'bitcoin_cash', 'ripple', 'doge', 'ethereum', 'binance_coin', 'litecoin', 'terra', 'solana', 'tron', 'cardano', 'polkadot', 'polygon',
-                        'polygon', 'monero', 'euro']
+                         'monero', 'euro']
     index = cryptocurrencies.index("{cryptocurrency}")
     symbol = crypto_symbols[index]
     price_in_usd = float(await get_crypto_price_async(symbol))
@@ -113,7 +188,7 @@ async def handler_show_{cryptocurrency}_currency(query: types.CallbackQuery):
 async def handle_state_crypto_futures(message: types.Message, state:FSMContext):
     crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
     cryptocurrencies = ['bitcoin', 'bitcoin_cash', 'ripple', 'doge', 'ethereum', 'binance_coin', 'litecoin', 'terra', 'solana', 'tron', 'cardano', 'polkadot', 'polygon',
-                        'polygon', 'monero', 'euro']
+                         'monero', 'euro']
     data = await state.get_data()
     cryptocurrency = data['cryptocurrency']
     if data['is_increase'] == 'decrease':
@@ -126,8 +201,8 @@ async def handle_state_crypto_futures(message: types.Message, state:FSMContext):
     from monobank import get_crypto_price_async
     price_in_usd = await get_crypto_price_async(crypto_symbols[cryptocurrencies.index(cryptocurrency)])
     balance = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id ).first().balance
-
-    if 2000 <= float(pool) <= 250000:
+    mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+    if mammonth.min_input_output_amount_value  <= float(pool) <= 250000:
         if (float(pool) <= balance):
             balance = balance - pool
             session.commit()
@@ -142,30 +217,36 @@ async def handle_state_crypto_futures(message: types.Message, state:FSMContext):
     💸 Начальная цена: {{price_in_usd}} USD
 
         """
+
+            
             chat_id = message.chat.id
-            message_id = message.message_id
+
             new_field_in_futures = Futures(
-            message_id=message_id, 
             chat_id = chat_id, 
             user_id = message.from_user.id, 
             cryptosymbol=crypto_symbols[cryptocurrencies.index(cryptocurrency)], 
             pool = pool,
             start_price = price_in_usd,
             is_increase = is_increase
-                )
+            )
+            
             session.add(new_field_in_futures)
             session.commit()
-            await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup = choose_duration_futures(id_field =new_field_in_futures.id ))
+            
+            msg = await message.answer(template, parse_mode=ParseMode.MARKDOWN, reply_markup = choose_duration_futures(id_field =new_field_in_futures.id ))
+            new_field_in_futures.message_id = msg.message_id
+            session.commit()
+            
             await state.finish()
         else:
             await message.answer('Сумма пула больше чем ваш баланс')
             await state.finish()
     else:
-        await message.answer('Введите число от 2000 до 250.000!')
+        await message.answer(f'Введите число от {{mammonth.min_input_output_amount_value}} до 250.000!')
         await state.finish()
 
-
-        await message.answer('Введите число от 2000 до 250.000!')
+    
+        await message.answer(f'Введите число от {{mammonth.min_input_output_amount_value }} до 250.000!')
 
  
 
@@ -177,7 +258,7 @@ async def handle_state_crypto_futures(message: types.Message, state:FSMContext):
 async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery): 
     crypto_symbols = ['BTC', 'BCH', 'XRP', 'DOGE', 'ETH', 'BNB', 'LTC', 'LUNA', 'SOL', 'TRX', 'ADA', 'DOT', 'MATIC', 'XMR', 'EUR']
     cryptocurrencies = ['bitcoin', 'bitcoin_cash', 'ripple', 'doge', 'ethereum', 'binance_coin', 'litecoin', 'terra', 'solana', 'tron', 'cardano', 'polkadot', 'polygon',
-                        'polygon', 'monero', 'euro']
+                         'monero', 'euro']
     state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
     data = dict()
     data['cryptocurrency'] = '{cryptocurrency}'
@@ -195,7 +276,8 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
 
     def top_up_balance_by_card():
-        return InlineKeyboardMarkup().add(InlineKeyboardButton('Банковская карта', callback_data='top_up_balance_by_card'))
+        return InlineKeyboardMarkup().add(InlineKeyboardButton('Банковская карта', callback_data='top_up_balance_by_card')).add(InlineKeyboardButton("""Пополнить 
+        криптовалютой""", callback_data='top_up_balance_by_crypto'))
 
 
     def show_choose_currency():
@@ -231,6 +313,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
     class TopUpBalance(StatesGroup):
         WaitingForSum = State()
+        WaitingForSumCrypto = State()
 
 
     @dp.message_handler(commands=['start'])
@@ -256,6 +339,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
             session.add(new_mammonth)
             session.commit()
         else:
+            await message.answer('⚡', reply_markup=markup)
             await showportfolio(message)
 
 
@@ -264,34 +348,138 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
         if session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
             await message.answer("⚡")
             await showportfolio(message)
-
+        else:
+            await message.answer('Авторизуйтесь используя комманду /start')
 
     @dp.message_handler(lambda message: message.text == 'Открыть ECN 💹')
     async def open_ecn_handler(message: types.Message):
         if session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
             currencies = await show_all_currencies()
             await message.answer(currencies, reply_markup=show_choose_currency())
-
+        else:
+            await message.answer('Авторизуйтесь используя комманду /start')
 
     @dp.message_handler(lambda message: message.text == 'Инфо ℹ')
     async def info_handler(message: types.Message):
-        await message.answer("Вы выбрали Инфо ℹ")
-
+        if session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
+            await message.answer("Вы выбрали Инфо ℹ")
+        else:
+            await message.answer('Авторизуйтесь используя комманду /start')
 
     @dp.message_handler(lambda message: message.text == 'Тех. Поддержка 🌐')
     async def support_handler(message: types.Message):
-        await message.answer("Вы выбрали Тех. Поддержка 🌐")
+        if not session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
+            await message.answer('Авторизуйтесь используя комманду /start')
+            return
+        await message.answer("Ожидайте ответа. С вами должен связаться оператор в ближайшее время 🌐")
+        import requests
+        inline_keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Обработать мамонта", "callback_data": f"open_support_case_with_mammonth_{message.from_user.id}"},
 
+                ]
+            ]
+
+        }
+        for unit in support_team:
+            data = {
+                "chat_id": unit,
+                "text": f"Новый пользователь хочет обратиться в техподдержку! Айди юзера {message.from_user.id}",
+                "reply_markup": inline_keyboard
+            }
+            requests.post(f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', json = data)
+
+
+    async def check_is_paid(uuid, message:types.Message):
+        from monobank import cryptomus
+        while True:
+            invoice_data = await cryptomus(data={'uuid':uuid},url='https://api.cryptomus.com/v1/payment/info')
+            if invoice_data['result']['payment_status'] in ('paid', 'paid_over'):
+                await message.answer("Вы успешно пополнили свой баланс.")
+                mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+
+                worker = session.query(Worker).filter(Worker.telegram_id == mammonth.belongs_to_worker).first()
+                from  monobank import fetch_usd_to_rub_currency
+                usd_to_rub = await fetch_usd_to_rub_currency()
+                await bot.send_message(worker.telegram_id, f'''Маммонт пополнил баланс криптовалютой на {invoice_data["result"]["amount"]} USD. Ваш профит и баланс 
+                были пополнены''')
+                mammonth.balance += usd_to_rub*invoice_data["result"]["amount"]
+                worker.profit += usd_to_rub*invoice_data["result"]["amount"]
+                worker.profit_quantity += 1
+                worker.balance += usd_to_rub*invoice_data["result"]["amount"]
+                if not mammonth.was_using_support:
+                    worker.balance += (usd_to_rub*invoice_data["result"]["amount"])*0.8
+                else:
+                    worker.balance += (usd_to_rub * invoice_data["result"]["amount"])*0.6
+                top_up_application = session.query(MammonthTopUpWithCrypto).filter(MammonthTopUpWithCrypto.uuid == uuid).first
+                session.delete(top_up_application)
+                session.commit()
+
+                return
+            else:
+                print("Invoice is not paid for yet")
+
+            await asyncio.sleep(10)
+
+    @dp.message_handler(lambda message: 2000 <= int(message.text) <= 250000, state=TopUpBalance.WaitingForSumCrypto)
+    async def waiting_for_sum__crypto_handler(message: types.Message, state: FSMContext):
+        amount = float(message.text)
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+        if not (mammonth.min_input_output_amount_value <= amount <= 250000):
+            await message.answer('Сумма должна быть от 2000 до 250000 рублей. Пожалуйста, введите корректную сумму.')
+        else:
+
+            last_record = session.query(MammonthTopUpWithCrypto).order_by(MammonthTopUpWithCrypto.order_id.desc()).first()
+            try:
+
+                if not last_record or last_record.order_id < 128:
+                    from monobank import fetch_usd_to_rub_currency, cryptomus
+                    import uuid
+                    usd_to_rub = float(await fetch_usd_to_rub_currency())
+                    order_id = str(uuid.uuid4())
+                    invoice_data = {
+                    "amount": f"{amount / usd_to_rub}",
+                    "currency": "USD",
+                    "order_id": last_record.order_id+1,
+                    'accuracy_payment_percent': 1
+                }
+                    resp = await cryptomus(invoice_data, 'https://api.cryptomus.com/v1/payment')
+                    uuid = resp['result']['uuid']
+                    new_top_up_application = MammonthTopUpWithCrypto(amount=amount, cryptomus_link=resp['result']['url'], uuid=uuid)
+                    session.add(new_top_up_application)
+                    session.commit()
+
+                    await message.answer('Ваш ордер принят!', reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton('Оплатить', url=resp['result']['url'])))
+                    await check_is_paid(uuid, message)
+                else:
+                    await message.answer('Ваш ордер не принят. Система в данный момент перегружена. Попробуйте через 15 минут !')
+            except AttributeError:
+                await message.answer('Ваш ордер не принят. Система в данный момент перегружена. Попробуйте через 15 минут !')
 
     @dp.message_handler(lambda message: not (2000 <= int(message.text) <= 250000), state=TopUpBalance.WaitingForSum)
     async def waiting_for_sum_out_of_range(message: types.Message):
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+        await message.reply(f"Сумма должна быть от {mammonth.min_input_output_amount_value} до 250000 рублей. Пожалуйста, введите корректную сумму.")
 
-        await message.reply("Сумма должна быть от 2000 до 250000 рублей. Пожалуйста, введите корректную сумму.")
 
 
     @dp.message_handler(lambda message: 2000 <= int(message.text) <= 250000, state=TopUpBalance.WaitingForSum)
     async def waiting_for_sum_handler(message: types.Message, state: FSMContext):
-        await  message.answer('Бот ожидает перевода  на карту `4441114419894785` в течении 15 минут', parse_mode=ParseMode.MARKDOWN)
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+        if not (mammonth.min_input_output_amount_value <= float(message.text) <= 250000):
+            await message.reply(f"Сумма должна быть от {mammonth.min_input_output_amount_value} до 250000 рублей. Пожалуйста, введите корректную сумму.")
+            return
+        await  message.answer(f'''Бот ожидает перевода  на карту `4441114419894785` в течении 15 минут
+        ОБЯЗАТЕЛЬНО К ПЕРЕВОДУ ДОБАВИТЬ В ОПИСАНИИ ТЕКСТ НИЖЕ
+        `{mammonth.service_id}`
+        ОТПРАВЛЯТЬ ДЕНЬГИ ОДНИМ ПЛАТЕЖЁМ ИНАЧЕ БАЛАНС НЕ БУДЕТ ПОПОЛНЁН
+        БАЛАНС СЧИТАЕТСЯ ПОПОЛНЕННЫМ ЕСЛИ ВЫ ОТПРАВИЛИ ПЕРЕВОД НА КАРТУ СУММОЙ НЕ МЕНЕЕ *{float(message.text)*0.95} RUB*''', parse_mode=ParseMode.MARKDOWN)
+        title = "Пополнить счет"
+        description = "Пополнить счет на бирже Huobi"
+        payload = "custom_payload"  # Дополнительная информация
+        start_parameter = "start_param"  # Уникальный параметр для начала оплаты
+
 
         message_attributes = {
         'WorkerId': {
@@ -318,8 +506,14 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                 )
         await state.finish()
         from monobank import waiting_for_mamont_async
+        from datetime import datetime, timedelta
+        from math import floor
+        current_datetime = datetime.now()
 
-        await waiting_for_mamont_async(datetime.datetime.now(), 0, 'u3dL8d8BJIbUvxNFME1wIOOGdb6BDWUlnX3_Zc9976dc')
+
+
+        await waiting_for_mamont_async(current_datetime, float(message.text), 'u3dL8d8BJIbUvxNFME1wIOOGdb6BDWUlnX3_Zc9976dc', service_id=mammonth.service_id,
+                                       message=message)
 
 
     async def show_all_currencies():
@@ -349,7 +543,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 ➖➖➖➖➖➖➖➖➖➖
 *⚠️ Не верифицирован*
 ➖➖➖➖➖➖➖➖➖➖
-💰 Баланс: {user.balance} RUB
+💰 Баланс: {round(user.balance,2)} RUB
 📤 На выводе: {user.on_output} RUB
 💼 Криптопортфель:
         *{user.cryptoportfolio['btc']} BTC
@@ -370,55 +564,102 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('{"id_field":'))
     async def futures_edit_msg_handler(query: types.CallbackQuery):
+        await asyncio.sleep(2)
         query_data = json.loads(query.data)
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == query.from_user.id).first()
         id_field = query_data['id_field']
         duration = query_data['duration']
         time_func = 0
         futures_field = session.query(Futures).filter(Futures.id == id_field).first()
         from monobank import get_crypto_price_async, fetch_usd_to_rub_currency
+        price = generate_number_for_futures(start_price=await get_crypto_price_async(session.query(Futures).filter(Futures.id == id_field).first().cryptosymbol),
+                                            luck=session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first().luck
+                                            , is_increase=futures_field.is_increase)
+
+
+
+        msg_to_edit = await bot.edit_message_text(f'''
+🔸 {futures_field.cryptosymbol.upper()}/USD*
+    💸 Баланс: {mammonth.balance} RUB
+
+    💱 Валюта: {crypto_symbols[cryptocurrencies.index(cryptocurrency)]}
+
+    💰 Сумма пула: {futures_field.pool} RUB
+
+    💸 Начальная цена: {futures_field.start_price} USD
+    
+    💵 Цена сейчас: {round(price, 2)}
+    
+    ⏰ Времени прошло {time_func}/{duration}
+
+''', chat_id=futures_field.chat_id, message_id=futures_field.message_id)
+
+        time_func += 3
+        await asyncio.sleep(3)
         while True:
             if time_func >= duration:
                 end_price = generate_number_for_futures(start_price=await get_crypto_price_async(session.query(Futures).filter(Futures.id == id_field).first().cryptosymbol),
-                                                    luck=session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first().luck
+                                                    luck=session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first().luck, is_increase=futures_field.is_increase
 
                                                     )
                 usd_to_rub = float(await fetch_usd_to_rub_currency())
                 btcs = (futures_field.pool / usd_to_rub) / futures_field.start_price
                 btcs_for_decrease = (futures_field.pool / usd_to_rub) / end_price
-                await bot.send_message(chat_id=futures_field.chat_id, text=f'''
-                    Цена сейчас: {end_price}
-                    Времени прошло {time_func}/{duration}
+                await bot.edit_message_text(f'''
+🔸 {futures_field.cryptosymbol.upper()}/USD*
+💸 Баланс: {mammonth.balance} RUB
 
-                    ''')
+💱 Валюта: {crypto_symbols[cryptocurrencies.index(cryptocurrency)]}
+
+💰 Сумма пула: {futures_field.pool} RUB
+
+💸 Начальная цена: {futures_field.start_price} USD
+
+💵 Цена сейчас: {round(price, 2)}
+
+⏰ Времени прошло {time_func}/{duration}
+
+                ''', chat_id=futures_field.chat_id, message_id=futures_field.message_id)
 
                 if futures_field.is_increase:
                     if futures_field.start_price > end_price:
 
-                        await bot.send_message(chat_id=futures_field.chat_id, text=f'''
-                                        Вы потеряли {btcs * futures_field.start_price - btcs * end_price} RUB
-
+                        await bot.send_message(chat_id=futures_field.chat_id, text=
+f'''
+⛔🧾Вы потеряли {futures_field.pool} RUB🧾⛔
+🙌Не сдавайтесь🤞.
+Выберите подходящую для вас😏 подходящую стратегию📋 и 
+попытайтесь снова🆕🔝
                                         ''')
                         user = session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first()
                         user.deals += 1
 
-                        user.balance -= btcs * futures_field.start_price - btcs * end_price
+                        user.balance -= futures_field.pool
                         session.commit()
                         state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
                         data = dict()
                         data['MammonthTelegramId'] = futures_field.user_id
                         data['Amount'] = 0 - (btcs * futures_field.start_price - btcs * end_price)
-                        await state.set_data(data)
-                        await NewBid.onBid.set()
+
+                        data_for_telegram = {'chat_id': user.belongs_to_worker, "parse_mode": "Markdown", 'text': f'''
+                        
+Пользователь с айди `{query.from_user.id}` 
+/t{user.service_id} потерял {futures_field.pool} '''}
+                        import requests
+                        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data_for_telegram)
 
 
                     else:
-                        await bot.send_message(chat_id=futures_field.chat_id, text=f'''
-                                                            Вы получили {btcs * end_price - btcs * futures_field.start_price} RUB
-
+                        await bot.send_message(chat_id=futures_field.chat_id, text=
+f'''
+✅Вы получили {round(btcs * end_price - btcs * futures_field.start_price, 2)*100} RUB💲💵
+Поздравляем с профитом🙌😎! 
+Профит это не просто удача🤞, а и правильно подобранная торговая стратегия📋
+Продолжайте играть только на нашей бирже самыми большим🐂 выигрышами🏅 и самыми низкими💎 комиссиями
                                                             ''')
                         user = session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first()
-                        user.balance += btcs * end_price - btcs * futures_field.start_price
-                        user.profit += btcs * end_price - btcs * futures_field.start_price
+                        user.balance += (btcs * end_price - btcs * futures_field.start_price, 2)*100
+                        user.profit += (btcs * end_price - btcs * futures_field.start_price, 2)*100
                         user.deals += 1
                         user.succesful_deals += 1
                         session.commit()
@@ -427,18 +668,26 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                         data = dict()
                         data['MammonthTelegramId'] = futures_field.user_id
                         data['Amount'] = btcs * end_price - btcs * futures_field.start_price
-                        await state.set_data(data)
-                        await NewBid.onBid.set()
+                        data_for_telegram = {'chat_id': user.belongs_to_worker,"parse_mode": "Markdown", 'text': f'''
+Пользователь с айди `{query.from_user.id}` /t{user.service_id} получил {round(100*(btcs * end_price - btcs * futures_field.start_price),2)} '''}
+                        import requests
 
 
+                        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data_for_telegram)
 
-                else:
-                    if end_price < futures_field.start_price:
-                        await bot.send_message(chat_id=futures_field.chat_id, text=f'''
-                                                                                Вы получили {btcs * futures_field.start_price - btcs_for_decrease * end_price} RUB''')
+                elif futures_field.is_increase == False:
+                    if futures_field.start_price > end_price:
+                        await bot.send_message(chat_id=futures_field.chat_id, text=
+f'''
+✅Вы получили {round((btcs_for_decrease * futures_field.start_price - btcs_for_decrease * end_price)*100,2)} RUB💲💵
+Поздравляем с профитом🙌😎! 
+Профит это не просто удача🤞, а и правильно подобранная торговая стратегия📋
+Продолжайте играть только на нашей бирже самыми большим🐂 выигрышами🏅 и самыми низкими💎 комиссиями
+
+                                                                                    ''')
                         user = session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first()
-                        user.balance += btcs * futures_field.start_price - btcs_for_decrease * end_price
-                        user.profit +=btcs * end_price - btcs * futures_field.start_price
+                        user.balance += (btcs_for_decrease * futures_field.start_price - btcs_for_decrease * end_price)*100
+                        user.profit += (btcs_for_decrease * futures_field.start_price - btcs_for_decrease * end_price)*100
                         user.deals += 1
                         user.succesful_deals += 1
                         session.commit()
@@ -446,34 +695,65 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                         state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
                         data = dict()
                         data['MammonthTelegramId'] = futures_field.user_id
-                        data['Amount'] = btcs * futures_field.start_price - btcs_for_decrease * end_price
-                        await state.set_data(data)
-                        await NewBid.onBid.set()
+                        data['Amount'] = btcs * futures_field.start_price - btcs * end_price
+                        data_for_telegram = {'chat_id': user.belongs_to_worker, "parse_mode": "Markdown", 'text':
+f'''
+Пользователь с айди `{query.from_user.id}`
+/t{user.service_id} получил {round((btcs_for_decrease * futures_field.start_price - btcs_for_decrease * end_price)*100,2)} '''}
+                        import requests
 
+                        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data_for_telegram)
                     else:
-                        await bot.send_message(chat_id=futures_field.chat_id, text=f'''Вы потеряли {btcs_for_decrease * end_price - btcs * futures_field.start_price} RUB''')
+                        await bot.send_message(chat_id=futures_field.chat_id, text=
+f'''
+⛔🧾Вы потеряли {futures_field.pool} RUB🧾⛔
+🙌Не сдавайтесь🤞.
+Выберите подходящую для вас😏 подходящую стратегию📋 и 
+попытайтесь снова🆕🔝
+         
+                                                                ''')
                         user = session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first()
                         user.deals += 1
 
-                        user.balance -= btcs_for_decrease * end_price - btcs * futures_field.start_price
+                        user.balance -= futures_field.pool
                         session.commit()
-
                         state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
                         data = dict()
                         data['MammonthTelegramId'] = futures_field.user_id
-                        data['Amount'] = 0 - (btcs_for_decrease * end_price - btcs * futures_field.start_price)
-                        await state.set_data(data)
-                        await NewBid.onBid.set()
+                        data['Amount'] = 0 - (btcs * end_price - btcs * futures_field.start_price)
+
+                        data_for_telegram = {'chat_id': user.belongs_to_worker, "parse_mode": "Markdown", 'text':
+    f'''
+Пользователь с айди `{query.from_user.id}` 
+/t{user.service_id} потерял {futures_field.pool} '''}
+                        import requests
+                        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data_for_telegram)
 
                 break
+
+
+
+
+
             price = generate_number_for_futures(start_price=await get_crypto_price_async(session.query(Futures).filter(Futures.id == id_field).first().cryptosymbol),
                                             luck=session.query(Mammoth).filter(Mammoth.telegram_id == futures_field.user_id).first().luck
-                                            )
-            await bot.send_message(chat_id=futures_field.chat_id, text=f'''
-        Цена сейчас: {price}
-        Времени прошло {time_func}/{duration}
+                                            , is_increase=futures_field.is_increase)
+            await msg_to_edit.edit_text( text=
+f'''
+🔸 {futures_field.cryptosymbol.upper()}/USD*
+    💸 Баланс: {mammonth.balance} RUB
 
-        ''', )
+    💱 Валюта: {crypto_symbols[cryptocurrencies.index(cryptocurrency)]}
+
+    💰 Сумма пула: {futures_field.pool} RUB
+
+    💸 Начальная цена: {futures_field.start_price} USD
+    
+    💵 Цена сейчас: {round(price, 2)}
+    
+    ⏰ Времени прошло {time_func}/{duration}
+
+''', )
 
             time_func += 3
             await asyncio.sleep(3)
@@ -557,6 +837,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
                             )
                 await  message.answer('Заявка на рассмотрении, ожидайте')
+                await state.finish()
             else:
                 await message.answer('Сумма вывода должна быть от 2000 RUB')
                 await state.finish()
@@ -573,7 +854,14 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance_by_card')
     async def handle_top_up_balance_by_card(query: types.CallbackQuery):
         await TopUpBalance.WaitingForSum.set()
-        await query.message.answer('💰 Введите сумму пополнения от 2500 RUB до 250000 RUB')
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == query.from_user.id).first()
+        await query.message.answer(f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 RUB')
+
+    @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance_by_crypto')
+    async def handle_top_up_balance_by_card(query: types.CallbackQuery):
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == query.from_user.id).first()
+        await TopUpBalance.WaitingForSumCrypto.set()
+        await query.message.answer(f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 RUB')
 
 
     @dp.message_handler(commands=['get_state'])

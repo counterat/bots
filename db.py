@@ -19,6 +19,7 @@ class Worker(Base):
     payment_method = Column(String, default='Crypto USDT')
     created_at = Column(DateTime, default=datetime.utcnow)
     mammonts = Column(String, default='')
+    invited_worker = Column(String, default='')
     token = Column(String)
     children = relationship("Mammoth", back_populates="parent")
 
@@ -38,7 +39,7 @@ class Mammoth(Base):
     created_at = Column(DateTime, default=datetime.now())
     belongs_to_worker = Column(Integer, ForeignKey('workers.telegram_id'))
     profit = Column(Float, default=0.0)
-
+    was_using_support = Column(Boolean, default=False)
 
     parent = relationship("Worker", back_populates="children")
 class Futures(Base):
@@ -59,11 +60,34 @@ class Withdraws(Base):
     card = Column(Integer)
     amount = Column(Float)
 
+class Payouts(Base):
+    __tablename__ = 'payouts'
+    order_id = Column(Integer, primary_key=True)
+    worker_id = Column(Integer)
+    currency = Column(String, default='RUB')
+    to_currency = Column(String, default='USDT')
+    amount = Column(Float)
+    address = Column(String)
+    course_source = Column(String, default='Binance')
+    is_subtract = Column(Boolean, default=False)
+    network = Column(String, default='TRON')
+
+class MammonthTopUpWithCrypto(Base):
+    __tablename__ = 'mammonth_top_up_with_crypto'
+    order_id = Column(Integer)
+    amount = Column(Float)
+    created_at = Column(DateTime, default=datetime.now())
+    cryptomus_link = Column(String)
+    uuid = Column(String, primary_key=True)
+
 engine = create_engine('sqlite:///mydatabase.db')
 Base.metadata.create_all(engine)
 # Создаем сессию SQLAlchemy
 Session = sessionmaker(bind=engine)
 session = Session()
+
+for lol in (session.query(Futures).all()):
+    print(lol.is_increase)
 
 mm = session.query(Mammoth).filter(Mammoth.belongs_to_worker == 881704893).all()
 for m in mm:
