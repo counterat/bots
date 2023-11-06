@@ -36,7 +36,7 @@ def create_mirror_of_payout_bot(token):
     asyncio.set_event_loop(loop)
     @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('approve_payout_') or callback_query.data.startswith('disapprove_payout'))
     async def approve_or_disapprove_payout(query:types.CallbackQuery):
-        await query.message.answer('dsdfdsf')
+
         decision = query.data.split('_')[0]
         order_id = int(query.data.split('_')[2])
 

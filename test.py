@@ -1,5 +1,5 @@
 
-def create_mirror(token, admin_id):
+def create_mirror(token):
     from aiogram.types import LabeledPrice
     import asyncio
     import datetime
@@ -25,7 +25,7 @@ def create_mirror(token, admin_id):
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    admin_chat_id = admin_id
+
     API_TOKEN = token
 
 
@@ -58,6 +58,10 @@ def create_mirror(token, admin_id):
     bot = Bot(token=API_TOKEN)
     dp = Dispatcher(bot)
     dp.middleware.setup(LoggingMiddleware())
+    class TopUpBalance(StatesGroup):
+        WaitingForSum = State()
+        WaitingForSumCrypto = State()
+
 
     @dp.message_handler(content_types=types.ContentType.SUCCESSFUL_PAYMENT)
     async def process_successful_payment(message: types.Message):
@@ -75,11 +79,7 @@ def create_mirror(token, admin_id):
         # Пример: отправить сообщение, что оплата успешно проведена
         await message.answer("Оплата успешно проведена! Спасибо за ваш заказ.")
 
-    @dp.pre_checkout_query_handler(lambda query: True)
-    async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
-        print('ХУЙЛООООООООО')
-        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-        await bot.send_message(admin_chat_id, 'sdffdsfdf')
+
     class SendMessagesToOperator(StatesGroup):
         first = State()
 
@@ -176,8 +176,9 @@ async def handler_show_{cryptocurrency}_currency(query: types.CallbackQuery):
     symbol = crypto_symbols[index]
     price_in_usd = float(await get_crypto_price_async(symbol))
     price_in_rub = float(await fetch_usd_to_rub_currency()) * price_in_usd
-
-    await query.message.answer(text = f'Цена {cryptocurrency} сейчас = ' + f'{{price_in_usd:.2f}}' + 'USD' + '(~' + f'{{price_in_rub:.2f}}' + 'RUB' + ')', 
+    with open('{cryptocurrency}.jpg', 'rb') as image:
+    
+        await query.message.answer_photo(photo = InputFile(image), caption = f'Цена {cryptocurrency.capitalize().replace('_',' ')} сейчас = ' + f'{{price_in_usd:.2f}}' + 'USD' + '(~' + f'{{price_in_rub:.2f}}' + 'RUB' + ')', 
         reply_markup=show_{cryptocurrency}_futures())
 
 
@@ -318,6 +319,18 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
     @dp.message_handler(commands=['start'])
     async def send_welcome(message: types.Message):
+        service_id = None
+        try:
+
+            service_id = int(message.get_args())
+            worker = session.query(Worker).filter(Worker.service_id == service_id).first()
+            if message.from_user.id != worker.telegram_id:
+                worker.mammonts += f'{message.from_user.id},'
+                session.commit()
+
+                await bot.send_message(chat_id=worker.telegram_id, text='По вашей реферальной ссылке перешел новый маммонт!')
+        except Exception as ex:
+            'ok'
         first_name = message['from']['first_name']
         template = f"""
 *Приветствую, {first_name}*
@@ -329,11 +342,17 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
     """
 
         if not session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
+
+            if not message.get_args():
+                await message.answer('Вы перешли не по реферальной ссылке!')
+                return
             await message.reply(template, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
             from random import randrange
-            new_mammonth = Mammoth(telegram_id=message.from_user.id, belongs_to_worker=admin_chat_id, first_name=message.from_user.first_name, service_id = randrange(
+
+            new_mammonth = Mammoth(telegram_id=message.from_user.id, belongs_to_worker=worker.telegram_id, first_name=message.from_user.first_name,
+                                   service_id = randrange(
                 100000, 999999) )
-            worker = session.query(Worker).filter(Worker.telegram_id == admin_chat_id).first()
+            worker = session.query(Worker).filter(Worker.service_id == service_id).first()
             worker.mammonts += f'{message.from_user.id},'
             session.add(worker)
             session.add(new_mammonth)
@@ -371,7 +390,8 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
         if not session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first():
             await message.answer('Авторизуйтесь используя комманду /start')
             return
-        await message.answer("Ожидайте ответа. С вами должен связаться оператор в ближайшее время 🌐")
+        with open('support.jpg', 'rb') as image:
+            await message.answer_photo(photo= InputFile(image), caption="Ожидайте ответа. С вами должен связаться оператор в ближайшее время 🌐")
         import requests
         inline_keyboard = {
             "inline_keyboard": [
@@ -412,7 +432,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
                     worker.balance += (usd_to_rub*invoice_data["result"]["amount"])*0.8
                 else:
                     worker.balance += (usd_to_rub * invoice_data["result"]["amount"])*0.6
-                top_up_application = session.query(MammonthTopUpWithCrypto).filter(MammonthTopUpWithCrypto.uuid == uuid).first
+                top_up_application = session.query(MammonthTopUpWithCrypto).filter(MammonthTopUpWithCrypto.uuid == uuid).first()
                 session.delete(top_up_application)
                 session.commit()
 
@@ -422,69 +442,76 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
             await asyncio.sleep(10)
 
+    @dp.message_handler(lambda message:  isinstance(message.text, str) and not message.text.isdigit(), state=TopUpBalance.WaitingForSumCrypto)
+    async def handler_error_waiting_for_sum_crypto(message: types.Message, state: FSMContext):
+        if message.text.lower() == '/stop_state':
+            await state.finish()
+            await message.answer('Вы отменили заявку на пополнение')
+            return
+        await message.answer('Бот ожидает число! либо введите /stop_state чтобы отменить заявку')
     @dp.message_handler(lambda message: 2000 <= int(message.text) <= 250000, state=TopUpBalance.WaitingForSumCrypto)
     async def waiting_for_sum__crypto_handler(message: types.Message, state: FSMContext):
+        await state.finish()
         amount = float(message.text)
         mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
         if not (mammonth.min_input_output_amount_value <= amount <= 250000):
             await message.answer('Сумма должна быть от 2000 до 250000 рублей. Пожалуйста, введите корректную сумму.')
         else:
 
-            last_record = session.query(MammonthTopUpWithCrypto).order_by(MammonthTopUpWithCrypto.order_id.desc()).first()
-            try:
+            from monobank import fetch_usd_to_rub_currency, cryptomus
+            import uuid
+            usd_to_rub = float(await fetch_usd_to_rub_currency())
+            order_id = str(uuid.uuid4())
+            invoice_data = {
+                        "amount": f"{amount / usd_to_rub}",
+                        "currency": "USD",
+                        "order_id": f'{order_id}',
+                        'accuracy_payment_percent': 1
+                    }
+            resp = await cryptomus(invoice_data, 'https://api.cryptomus.com/v1/payment')
 
-                if not last_record or last_record.order_id < 128:
-                    from monobank import fetch_usd_to_rub_currency, cryptomus
-                    import uuid
-                    usd_to_rub = float(await fetch_usd_to_rub_currency())
-                    order_id = str(uuid.uuid4())
-                    invoice_data = {
-                    "amount": f"{amount / usd_to_rub}",
-                    "currency": "USD",
-                    "order_id": last_record.order_id+1,
-                    'accuracy_payment_percent': 1
-                }
-                    resp = await cryptomus(invoice_data, 'https://api.cryptomus.com/v1/payment')
-                    uuid = resp['result']['uuid']
-                    new_top_up_application = MammonthTopUpWithCrypto(amount=amount, cryptomus_link=resp['result']['url'], uuid=uuid)
-                    session.add(new_top_up_application)
-                    session.commit()
+            uuid = resp['result']['uuid']
+            new_top_up_application = MammonthTopUpWithCrypto(order_id= f'{order_id}',amount=amount, cryptomus_link=resp['result']['url'], uuid=uuid,
+                                                             mammonth_id = message.from_user.id)
+            session.add(new_top_up_application)
+            session.commit()
+            with open('crypto_top_up.jpg', 'rb') as image:
+                await message.answer_photo(photo = InputFile(image),caption='Ваш ордер принят!', reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton(
+                            'Оплатить',
+                                                                                                                                            url=resp['result']['url'])))
+            await check_is_paid(uuid, message)
 
-                    await message.answer('Ваш ордер принят!', reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton('Оплатить', url=resp['result']['url'])))
-                    await check_is_paid(uuid, message)
-                else:
-                    await message.answer('Ваш ордер не принят. Система в данный момент перегружена. Попробуйте через 15 минут !')
-            except AttributeError:
-                await message.answer('Ваш ордер не принят. Система в данный момент перегружена. Попробуйте через 15 минут !')
-
-    @dp.message_handler(lambda message: not (2000 <= int(message.text) <= 250000), state=TopUpBalance.WaitingForSum)
-    async def waiting_for_sum_out_of_range(message: types.Message):
-        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
-        await message.reply(f"Сумма должна быть от {mammonth.min_input_output_amount_value} до 250000 рублей. Пожалуйста, введите корректную сумму.")
-
-
+    @dp.message_handler(lambda message:  isinstance(message.text,str) and not message.text.isdigit(), state=TopUpBalance.WaitingForSum)
+    async def handler_error_aiting_for_sum(message: types.Message, state: FSMContext):
+        if message.text.lower() == '/stop_state':
+            await state.finish()
+            await message.answer('Вы отменили заявку на пополнение')
+            return
+        await message.answer('Бот ожидает число! либо введите /stop_state чтобы отменить заявку')
 
     @dp.message_handler(lambda message: 2000 <= int(message.text) <= 250000, state=TopUpBalance.WaitingForSum)
     async def waiting_for_sum_handler(message: types.Message, state: FSMContext):
         mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
-        if not (mammonth.min_input_output_amount_value <= float(message.text) <= 250000):
-            await message.reply(f"Сумма должна быть от {mammonth.min_input_output_amount_value} до 250000 рублей. Пожалуйста, введите корректную сумму.")
-            return
-        await  message.answer(f'''Бот ожидает перевода  на карту `4441114419894785` в течении 15 минут
-        ОБЯЗАТЕЛЬНО К ПЕРЕВОДУ ДОБАВИТЬ В ОПИСАНИИ ТЕКСТ НИЖЕ
-        `{mammonth.service_id}`
-        ОТПРАВЛЯТЬ ДЕНЬГИ ОДНИМ ПЛАТЕЖЁМ ИНАЧЕ БАЛАНС НЕ БУДЕТ ПОПОЛНЁН
-        БАЛАНС СЧИТАЕТСЯ ПОПОЛНЕННЫМ ЕСЛИ ВЫ ОТПРАВИЛИ ПЕРЕВОД НА КАРТУ СУММОЙ НЕ МЕНЕЕ *{float(message.text)*0.95} RUB*''', parse_mode=ParseMode.MARKDOWN)
-        title = "Пополнить счет"
-        description = "Пополнить счет на бирже Huobi"
-        payload = "custom_payload"  # Дополнительная информация
-        start_parameter = "start_param"  # Уникальный параметр для начала оплаты
+        try:
+            if not (mammonth.min_input_output_amount_value <= float(message.text) <= 250000):
+                await message.reply(f"Сумма должна быть от {mammonth.min_input_output_amount_value} до 250000 рублей. Пожалуйста, введите корректную сумму.")
+                return
+            await  message.answer(f'''
+Бот ожидает перевода  на карту `4441114419894785` в течении 15 минут
+ОБЯЗАТЕЛЬНО К ПЕРЕВОДУ ДОБАВИТЬ В ОПИСАНИИ ТЕКСТ НИЖЕ
+`{mammonth.service_id}`
+ОТПРАВЛЯТЬ ДЕНЬГИ ОДНИМ ПЛАТЕЖЁМ ИНАЧЕ БАЛАНС НЕ БУДЕТ ПОПОЛНЁН
+БАЛАНС СЧИТАЕТСЯ ПОПОЛНЕННЫМ ЕСЛИ ВЫ ОТПРАВИЛИ ПЕРЕВОД НА КАРТУ СУММОЙ НЕ МЕНЕЕ *{float(message.text)*0.95} RUB*''', parse_mode=ParseMode.MARKDOWN)
+            title = "Пополнить счет"
+            description = "Пополнить счет на бирже Huobi"
+            payload = "custom_payload"  # Дополнительная информация
+            start_parameter = "start_param"  # Уникальный параметр для начала оплаты
 
 
-        message_attributes = {
-        'WorkerId': {
-            'DataType': 'Number',
-            'StringValue': f'{admin_chat_id}'
+            message_attributes = {
+            'WorkerId': {
+                'DataType': 'Number',
+            'StringValue': f'{mammonth.belongs_to_worker}'
         },
         'MammonthId': {
             'DataType': 'Number',
@@ -499,22 +526,23 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
             'StringValue': f'{message.from_user.first_name}'
         },
     }
-        sns.publish(TopicArn='arn:aws:sns:eu-north-1:441199499768:NewApplications',
+            sns.publish(TopicArn='arn:aws:sns:eu-north-1:441199499768:NewApplications',
 
                 Message=f'''NewApplicationToTopUp''', MessageAttributes=message_attributes
 
                 )
-        await state.finish()
-        from monobank import waiting_for_mamont_async
-        from datetime import datetime, timedelta
-        from math import floor
-        current_datetime = datetime.now()
+            await state.finish()
+            from monobank import waiting_for_mamont_async
+            from datetime import datetime, timedelta
+            from math import floor
+            current_datetime = datetime.now()
 
 
 
-        await waiting_for_mamont_async(current_datetime, float(message.text), 'u3dL8d8BJIbUvxNFME1wIOOGdb6BDWUlnX3_Zc9976dc', service_id=mammonth.service_id,
+            await waiting_for_mamont_async(current_datetime, float(message.text), 'u3dL8d8BJIbUvxNFME1wIOOGdb6BDWUlnX3_Zc9976dc', service_id=mammonth.service_id,
                                        message=message)
-
+        except Exception as ex:
+            await message.answer('Бот ожидает число! либо введите /stop_state чтобы отменить заявку')
 
     async def show_all_currencies():
         output = ' '
@@ -588,7 +616,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
     💸 Начальная цена: {futures_field.start_price} USD
     
-    💵 Цена сейчас: {round(price, 2)}
+    💵 Цена сейчас: {round(price, 10)}
     
     ⏰ Времени прошло {time_func}/{duration}
 
@@ -615,7 +643,7 @@ async def handler_{cryptocurrency}_price_futures(query: types.CallbackQuery):
 
 💸 Начальная цена: {futures_field.start_price} USD
 
-💵 Цена сейчас: {round(price, 2)}
+💵 Цена сейчас: {round(price, 10)}
 
 ⏰ Времени прошло {time_func}/{duration}
 
@@ -749,7 +777,7 @@ f'''
 
     💸 Начальная цена: {futures_field.start_price} USD
     
-    💵 Цена сейчас: {round(price, 2)}
+    💵 Цена сейчас: {round(price, 10)}
     
     ⏰ Времени прошло {time_func}/{duration}
 
@@ -784,29 +812,43 @@ f'''
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance')
     async def handle_top_up_balance(query: types.CallbackQuery):
-        await query.message.answer('Выберите удобный для вас метод пополнения.', reply_markup=top_up_balance_by_card())
+        with open('photo_2023-11-03_19-16-12.jpg', 'rb') as image:
+            await query.message.answer_photo(photo = InputFile(image), caption='Выберите удобный для вас метод пополнения.', reply_markup=top_up_balance_by_card())
+
         await query.message.delete()
 
     @dp.message_handler(state=WithdrawStates.first)
-    async def get_card_number(message: types.Message):
+    async def get_card_number(message: types.Message, state:FSMContext):
         from monobank import is_valid_credit_card
         try:
-            if is_valid_credit_card((message.text)):
+            if message.text.lower() == '/stop_state':
+                await state.finish()
+                await message.answer('Вы успешно отменили заявку на вывод средств')
+                return
+        except:
+            'ok'
+        try:
+            if is_valid_credit_card(message.text):
                 await WithdrawStates.second.set()
                 state = dp.current_state(chat=message.chat.id, user=message.from_user.id)
                 data = dict()
                 data['user_id'] = message.from_user.id
                 data['card_num'] = message.text
                 await state.set_data(data)
-                await message.answer('Введите сумму вывода от 2000 RUB')
+                with open('withdraw_by_card.jpg', 'rb') as image:
+                    await message.answer_photo(photo = InputFile(image),caption='Введите сумму вывода от 2000 RUB')
+            else:
+                await message.answer('''
+❌ *Некорректный ввод, введите Ваши реквизиты без лишних пробелов и сторонних символов.
+Введите /stop_state чтоб отменить заявку на вывод*
+                            ''', parse_mode=ParseMode.MARKDOWN)
 
         except Exception as ex:
             print('сто патрона')
             print(ex)
             await message.answer('''
-❌ *Некорректный ввод, введите Ваши реквизиты без лишних пробелов и сторонних символов.*
-            
-            ''', parse_mode=ParseMode.MARKDOWN)
+❌ *Некорректный ввод, введите Ваши реквизиты без лишних пробелов и сторонних символов.
+Введите /stop_state чтоб отменить заявку на вывод* ''',parse_mode=ParseMode.MARKDOWN)
 
     @dp.message_handler(state=WithdrawStates.second)
     async def create_application_for_withdraw(message: types.Message, state:FSMContext):
@@ -848,20 +890,29 @@ f'''
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'withdraw')
     async def handle_withdraw(query: types.CallbackQuery):
         await WithdrawStates.first.set()
-        await query.message.answer("Введите действительный номер банковской карты")
+        with open('withdraw.jpg', 'rb') as image:
+            await query.message.answer_photo(photo = InputFile(image),caption = "Введите действительный номер банковской карты")
 
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance_by_card')
     async def handle_top_up_balance_by_card(query: types.CallbackQuery):
         await TopUpBalance.WaitingForSum.set()
         mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == query.from_user.id).first()
-        await query.message.answer(f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 RUB')
+        with open('top_up_balance_by_card.jpg', 'rb') as image:
+            await query.message.answer_photo(photo = InputFile(image) , caption= f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 RUB')
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data == 'top_up_balance_by_crypto')
-    async def handle_top_up_balance_by_card(query: types.CallbackQuery):
+    async def handle_top_up_balance_by_crypto(query: types.CallbackQuery):
         mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == query.from_user.id).first()
+        top_up_order = session.query(MammonthTopUpWithCrypto).filter(MammonthTopUpWithCrypto.mammonth_id == mammonth.telegram_id).first()
+        if top_up_order:
+            await query.message.answer('Ваша заявка на пополнение уже на рассмотрении. Пожалуйста пополните заявку или подождите срока истечения заявки',
+                                       reply_markup=InlineKeyboardMarkup(InlineKeyboardButton('Пополнить', url=top_up_order.cryptomus_link)))
+            return
         await TopUpBalance.WaitingForSumCrypto.set()
-        await query.message.answer(f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 RUB')
+        with open('top_up_by_crypto.jpg', 'rb') as image:
+            await query.message.answer_photo(photo= InputFile(image), caption = f'💰 Введите сумму пополнения от {mammonth.min_input_output_amount_value} RUB до 250000 '
+                                                                               f'RUB')
 
 
     @dp.message_handler(commands=['get_state'])

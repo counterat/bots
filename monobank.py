@@ -107,6 +107,8 @@ def is_valid_credit_card(card_number):
 
     return total % 10 == 0
 
+
+
 async def cryptomus(data:dict, url:str):
     encoded_data = base64.b64encode(
         json.dumps(data).encode("utf-8")
@@ -139,4 +141,6 @@ async def fetch_usd_to_uah_currency():
             value = soup.select('#root > div > section > div > div > div > section:nth-child(1) > header > div.sc-1xlibvr-0.hSIwaV > div.sc-1xlibvr-2.ePvvEL > div:nth-child(3) > div.zlkj5-0.kIZRLg > label > input'
                 )
             return float(value[0]['value'])
+
+
 
