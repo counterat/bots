@@ -73,7 +73,7 @@ async def forward_message(message: types.Message):
     worker = session.query(Worker).filter(Worker.telegram_id == mamonth.belongs_to_worker).first()
     data = {'chat_id': mamonth.telegram_id, 'text': message.text}
     requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', data=data)
-    await message.answer(f'{active_chats}')
+
     await message.answer('Сообщение отослано')
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('open_support_case_with_mammonth'))
 async def handle_support_case_with_mammonth(query: types.CallbackQuery):
@@ -87,7 +87,6 @@ async def handle_support_case_with_mammonth(query: types.CallbackQuery):
     worker = session.query(Worker).filter(Worker.telegram_id == mamonth.belongs_to_worker).first()
     mamonth.was_using_support = True
     session.commit()
-    await query.message.answer(f'{worker.token}, {mamonth.telegram_id}, {type(mamonth.telegram_id)} {mammonth_id}')
     inline_keyboard = {
         "inline_keyboard": [
             [
@@ -101,7 +100,7 @@ async def handle_support_case_with_mammonth(query: types.CallbackQuery):
             'text': f'Оператор найден! нажмите кнопку *Начать чат*.Отправляйте только текстовые сообщения.Чтобы закончить чат - введите команду /stop_chat',
             "reply_markup":  inline_keyboard}
     response = requests.post(url=f'https://api.telegram.org/bot{worker.token}/sendMessage', json=data)
-    await query.message.answer(f'{response.text}, {inline_keyboard}')
+
     active_chats[query.from_user.id] = query.data.split('_')[-1]
     await query.message.answer(f'Вы начали чат с пользователем {mammonth_id}. Чтобы закончить - введите комманду /stop_chat')
 
@@ -574,8 +573,7 @@ async def showprofile(message: types.Message):
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
 
-    mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHLjQXT08DSEvk_OVIupYlNftSeo2FpACY',))
-    mirror_bot_threadw.start()
+
     try:
 
         service_id = int(message.get_args())
@@ -753,7 +751,7 @@ async def handle_approve_callback(query: types.CallbackQuery):
     chat = await  bot.get_chat(chat_id)
     await bot.send_message(chat_id, "Вы верифицированный пользователь. Теперь вы имеете право пользоваться функциями для воркеров")
 
-    new_user = Worker(telegram_id=chat_id, name=chat.username)
+    new_user = Worker(telegram_id=chat_id, name=chat.username, token='6697933833:AAHN1XS3c8xYnk8MpePa8CyPYD03cxbCSbg')
     session.add(new_user)
     session.commit()
 
@@ -773,6 +771,8 @@ if __name__ == '__main__':
     from aiogram import executor
     import threading
 
+    mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHLjQXT08DSEvk_OVIupYlNftSeo2FpACY',))
+    mirror_bot_threadw.start()
     mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAHN1XS3c8xYnk8MpePa8CyPYD03cxbCSbg',))
     mirror_bot_thread.start()
 

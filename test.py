@@ -111,7 +111,7 @@ def create_mirror(token):
         import requests
         data = {'chat_id': operator_id, 'text': message.text}
         requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
-        await message.answer(active_chats)
+
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('start_chat_with_operator'))
     async def handle_chat_with_operator(query: types.CallbackQuery):
