@@ -88,9 +88,10 @@ def create_mirror(token):
         await state.finish()
 
     from aiogram.dispatcher.filters import Command
-    @dp.message_handler(Command("stop_chat"), state=SendMessagesToOperator.first)
+    @dp.message_handler(Command("stop_chat"), lambda message: str(message.from_user.id) in active_chats.values())
     async def stop_chat(message: types.Message, state:FSMContext):
-        if not message.from_user.id:
+        mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
+        if not mammonth:
             await message.answer('Авторизуйтесь используя комманду /start')
             return
         data = await state.get_data()
@@ -101,27 +102,35 @@ def create_mirror(token):
         import requests
         requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
         for operator, mammonth in active_chats.items():
+
             if active_chats.get(operator) == str(message.from_user.id):
                 del active_chats[operator]
         await message.answer(f'{active_chats} 9999')
+
+
     @dp.message_handler(state=SendMessagesToOperator.first)
     async def handle_send_msgs_to_operator_state(message:types.Message, state:FSMContext):
-        data = await state.get_data()
-        operator_id = data['operator_id']
-        import requests
-        data = {'chat_id': operator_id, 'text': message.text}
-        requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
+        if str(message.from_user.id) in active_chats.values():
+            data = await state.get_data()
+            operator_id = data['operator_id']
+            import requests
+            data = {'chat_id': operator_id, 'text': message.text}
+            requests.post(url=f'https://api.telegram.org/bot{TOKEN_FOR_MAIN}/sendMessage', data=data)
+        else:
+            await  state.finish()
 
 
     @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('start_chat_with_operator'))
     async def handle_chat_with_operator(query: types.CallbackQuery):
+        await query.message.delete()
         operator_id = query.data.split('_')[-1]
         state = dp.current_state(chat=query.message.chat.id, user=query.from_user.id)
         data = dict()
-        data['operator_id'] = operator_id
+        data['operator_id'] = int(operator_id)
         await state.set_data(data)
         await SendMessagesToOperator.first.set()
 
+        await query.message.answer('Чат начат ! Отправляйте только текстовые сообщения.Чтобы закончить чат - введите команду /stop_chat')
 
     def choose_duration_futures(id_field):
         duration_options = [30, 60, 120, 180]

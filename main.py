@@ -60,13 +60,15 @@ async def stop_chat(message:types.Message):
     mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
     token = session.query(Worker).filter(Worker.telegram_id == mammonth.belongs_to_worker).first().token
     data = {'chat_id': mammonth_id, 'text': 'Оператор разорвал соединение с вами'}
+    await message.answer(active_chats)
     del active_chats[message.from_user.id]
+    print(active_chats)
     requests.post(url=f'https://api.telegram.org/bot{token}/sendMessage', data=data)
     await message.answer('Вы разорвали соединение с юзером')
 
 @dp.message_handler(lambda message: message.chat.id in active_chats)
 async def forward_message(message: types.Message):
-    await message.answer(f'{message.chat.id}')
+
 
     mammonth_id = active_chats[message.chat.id]
     mamonth = session.query(Mammoth).filter(Mammoth.telegram_id == mammonth_id).first()
