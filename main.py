@@ -22,7 +22,7 @@ from config_for_bots import payout_for_admins_bot_token
 from payoutbot import create_mirror_of_payout_bot
 admin_chat_id  = '881704893'
 #API_TOKEN = '6686215620:AAHPv-qUVFsAKH4ShiaGNfZWd0fHVYCX2qg'
-API_TOKEN = '6425684889:AAHTvfvQ2v1UbhBn72LbQiT3lXzWcW3aPk0'
+API_TOKEN = '6425684889:AAEGBan3uRKsBE-R7oEaPwdfxpQAw9SXNrU'
 from aws import  sqs
 logging.basicConfig(level=logging.INFO)
 import threading
@@ -775,7 +775,7 @@ if __name__ == '__main__':
 
     mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAHLjQXT08DSEvk_OVIupYlNftSeo2FpACY',))
     mirror_bot_threadw.start()
-    mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAHN1XS3c8xYnk8MpePa8CyPYD03cxbCSbg',))
+    mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAHMkPwaE3mBBKucb1mvBFTzeN5nXESHaNM',))
     mirror_bot_thread.start()
 
     storage = MemoryStorage()
