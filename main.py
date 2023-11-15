@@ -775,7 +775,7 @@ if __name__ == '__main__':
 
     mirror_bot_threadw = threading.Thread(target=create_mirror_of_payout_bot, args=('6415616043:AAE4Ywp1XiMYUWV1Gc6_lCTSUbgDXT_tbzw',))
     mirror_bot_threadw.start()
-    mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAHUhGRzzjqX9qoE0Xo5_ArRVzIVQvVzXeQ',))
+    mirror_bot_thread = threading.Thread(target=create_mirror, args=('6697933833:AAH_9IHB_jWC3jzvxzFTCEzADsNbFn3g-io',))
     mirror_bot_thread.start()
 
     storage = MemoryStorage()
