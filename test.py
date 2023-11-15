@@ -88,12 +88,21 @@ def create_mirror(token):
         await state.finish()
 
     from aiogram.dispatcher.filters import Command
-    @dp.message_handler(Command("stop_chat"), lambda message: str(message.from_user.id) in active_chats.values())
-    async def stop_chat(message: types.Message, state:FSMContext):
+    @dp.message_handler(lambda message: message.text.lower() == '/stop_chat', state=SendMessagesToOperator.first)
+    async def stop_chat(message: types.Message):
+        await message.answer('dsfdsf')
         mammonth = session.query(Mammoth).filter(Mammoth.telegram_id == message.from_user.id).first()
         if not mammonth:
             await message.answer('Авторизуйтесь используя комманду /start')
             return
+
+        if str(message.from_user.id) not in active_chats.values():
+
+            await message.answer('На данный момент вы не находитесь в диалоге с тех. поддержкой')
+            return
+
+        state = dp.current_state(chat = message.chat.id, user=message.from_user.id)
+
         data = await state.get_data()
         operator_id = data['operator_id']
         await state.finish()
