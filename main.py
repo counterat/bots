@@ -211,6 +211,7 @@ __- 5 дней аренды: 3.500 руб.
                     await app.send_message(id_of_chat, template_my)
                     messages_sent += 1
                     await app.send_message(881704893, f'{messages_sent} сообщение было отправлено в чат {id_of_chat}')
+                    await asyncio.sleep(300)
                 except:
                     print(ex)
                     print(id_of_chat)
