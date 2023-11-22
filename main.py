@@ -39,7 +39,7 @@ session = Session()
 metadata = MetaData()
 
 logging.basicConfig(level=logging.INFO)
-app = Client('my_account_valeria', api_id= api_id, api_hash=api_hash)
+app = Client('my_account', api_id= api_id_for_valeria, api_hash=api_hash_for_valeria)
 
 chat_id = 189165596
 
@@ -132,7 +132,7 @@ async def distribute_other_chats(ids_of_chats):
     # Выбираем случайный файл из списка
 
     while True:
-        random_file = random.choice(files)
+
 
 
 
@@ -196,14 +196,15 @@ __- 5 дней аренды: 3.500 руб.
 За подробностями: @arend_avit0
         '''
         for id_of_chat in ids_of_chats:
+            random_file = random.choice(files)
             try:
 
                 await app.send_photo(id_of_chat, f'{os.path.join(folder_path, random_file)}', template_my)
                 print(id_of_chat)
                 messages_sent += 1
                 await app.send_message(881704893, f'{messages_sent} сообщение было отправлено в чат {id_of_chat}')
+                await asyncio.sleep(300)
 
-                await asyncio.sleep(300 )
 
 
             except Exception as ex:
